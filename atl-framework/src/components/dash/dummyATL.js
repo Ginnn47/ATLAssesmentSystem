@@ -294,4 +294,7 @@ const getPersistentData = () => {
 };
 
 export const dummyATL = getPersistentData();
-export const saveATLData = (data) => localStorage.setItem("atl_framework_data", JSON.stringify(data));
+export const saveATLData = (data) => {
+  localStorage.setItem("atl_framework_data", JSON.stringify(data));
+  window.dispatchEvent(new Event("atl-data-updated"));
+};

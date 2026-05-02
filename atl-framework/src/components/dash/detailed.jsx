@@ -5,7 +5,7 @@ import { dummyATL, saveATLData } from "./dummyATL";
 import { allStudentsData } from "./dummyStudents";
 
 const ratingOptions = [
-  { label: "Need Improvement", code: "NFI", description: "Fails to participate in the assigned part." },
+  { label: "Need Further Improvement", code: "NFI", description: "Fails to participate in the assigned part." },
   { label: "Progressing Toward Expectation", code: "PTE", description: "Struggles with assigned role; impacts the group." },
   { label: "Developing Expectation", code: "DE", description: "Tries to fulfill role; struggles with technical requirements." },
   { label: "Meeting Expectation", code: "ME", description: "Executes assigned role effectively; contributes reliably." },
@@ -40,6 +40,18 @@ const subjectColors = {
     accentMain: "text-amber-600",
     icon: "calculate",
   },
+};
+
+const normalizeRatingLabel = (label) =>
+  label === "Need Improvement" ? "Need Further Improvement" : label;
+
+const ratingValueMap = {
+  "Exceeding Expectation": 100,
+  "Meeting Expectation": 80,
+  "Developing Expectation": 60,
+  "Progressing Toward Expectation": 40,
+  "Need Further Improvement": 20,
+  "Need Improvement": 20,
 };
 
 export default function DetailedInputATL() {
@@ -85,8 +97,35 @@ export default function DetailedInputATL() {
   const [selectedRatings, setSelectedRatings] = useState({});
   const [openGroupId, setOpenGroupId] = useState(1);
   const [showInfoModal, setShowInfoModal] = useState(false);
+  const [dataVersion, setDataVersion] = useState(0);
+  const skipNextSubjectResetRef = React.useRef(false);
 
   useEffect(() => {
+    const syncDataFromStorage = () => {
+      const savedData = localStorage.getItem("atl_framework_data");
+      if (!savedData) return;
+
+      Object.assign(dummyATL, JSON.parse(savedData));
+      setDataVersion((version) => version + 1);
+    };
+
+    window.addEventListener("focus", syncDataFromStorage);
+    window.addEventListener("storage", syncDataFromStorage);
+    window.addEventListener("atl-data-updated", syncDataFromStorage);
+
+    return () => {
+      window.removeEventListener("focus", syncDataFromStorage);
+      window.removeEventListener("storage", syncDataFromStorage);
+      window.removeEventListener("atl-data-updated", syncDataFromStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (skipNextSubjectResetRef.current) {
+      skipNextSubjectResetRef.current = false;
+      return;
+    }
+
     setSelectedTopicIndex(0);
   }, [selectedSubject]);
 
@@ -99,7 +138,10 @@ export default function DetailedInputATL() {
     if (saved) {
       const { cls, subj, topicIdx } = JSON.parse(saved);
       if (cls) setSelectedClass(cls);
-      if (subj) setSelectedSubject(subj);
+      if (subj) {
+        skipNextSubjectResetRef.current = true;
+        setSelectedSubject(subj);
+      }
       if (Number.isInteger(topicIdx)) setSelectedTopicIndex(topicIdx);
     }
   }, []);
@@ -131,6 +173,49 @@ export default function DetailedInputATL() {
   const currentATLData = dummyATL[dataKey] || [];
   const activeATLName = atlSections.find((s) => s.id === openGroupId)?.label || "";
   const activeMetrics = currentATLData.filter((item) => item.atl && item.atl.includes(activeATLName));
+  const studentTopicScores = useMemo(() => {
+    const weights = dummyATL.savedWeights?.[dataKey] || {};
+
+    return studentOptions.reduce((acc, student) => {
+      const savedRatings = dummyATL.savedAssessments?.[student.id]?.[dataKey] || {};
+      const assessmentSource =
+        selectedStudent?.id === student.id ? { ...savedRatings, ...selectedRatings } : savedRatings;
+
+      let totalWeightedScore = 0;
+      let totalWeight = 0;
+      let fallbackScore = 0;
+      let fallbackCount = 0;
+
+      currentATLData.forEach((item) => {
+        (item.atl || []).forEach((atlName) => {
+          const ratingKey = `${dataKey}_${item.kriteria}_${atlName}`;
+          const ratingLabel = normalizeRatingLabel(assessmentSource[ratingKey]);
+          const ratingValue = ratingValueMap[ratingLabel];
+          if (!ratingValue) return;
+
+          const weightKey = `${item.kriteria} (${atlName})`;
+          const weight = parseFloat(weights[weightKey]) || 0;
+          if (weight > 0) {
+            totalWeightedScore += ratingValue * weight;
+            totalWeight += weight;
+          }
+
+          fallbackScore += ratingValue;
+          fallbackCount += 1;
+        });
+      });
+
+      const score =
+        totalWeight > 0
+          ? totalWeightedScore / totalWeight
+          : fallbackCount > 0
+            ? fallbackScore / fallbackCount
+            : null;
+
+      acc[student.id] = score === null ? null : Math.round(score);
+      return acc;
+    }, {});
+  }, [studentOptions, selectedStudent?.id, selectedRatings, currentATLData, dataKey, dataVersion]);
 
   const persistAssessment = () => {
     if (!selectedStudent || !dataKey) return false;
@@ -160,7 +245,7 @@ export default function DetailedInputATL() {
 
     const existingRatings = dummyATL.savedAssessments?.[selectedStudent.id]?.[dataKey];
     setSelectedRatings(existingRatings ? { ...existingRatings } : {});
-  }, [selectedStudent?.id, dataKey]);
+  }, [selectedStudent?.id, dataKey, dataVersion]);
 
   const completedCategoryCount = useMemo(() => {
     return atlSections.filter((section) => {
@@ -190,7 +275,7 @@ export default function DetailedInputATL() {
       (item.atl || []).forEach((atlName) => {
         const weightKey = `${item.kriteria} (${atlName})`;
         const weight = parseFloat(weights[weightKey]) || 0;
-        const ratingLabel = selectedRatings[`${dataKey}_${item.kriteria}_${atlName}`];
+          const ratingLabel = normalizeRatingLabel(selectedRatings[`${dataKey}_${item.kriteria}_${atlName}`]);
         if (ratingLabel) {
           const ratingCode = ratingOptions.find((opt) => opt.label === ratingLabel)?.code;
           const ratingValue = { EE: 100, ME: 80, DE: 60, PTE: 40, NFI: 20 }[ratingCode] || 0;
@@ -222,13 +307,17 @@ export default function DetailedInputATL() {
                   Penilaian perilaku siswa berdasarkan pendekatan ATL pada setiap topik pembelajaran.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="inline-flex rounded-2xl border border-stone-200 bg-white p-1 shadow-[0_8px_18px_rgba(15,23,42,0.05)]">
+                <span className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-black text-white shadow-sm">
+                  <span className="material-symbols-outlined text-[18px]">person</span>
+                  Detailed
+                </span>
                 <Link
                   to="/input-atl/batch"
-                  className="inline-flex items-center gap-2 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-primary transition-all hover:bg-primary/10"
+                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-stone-600 transition-all hover:bg-primary/5 hover:text-primary"
                 >
                   <span className="material-symbols-outlined text-[18px]">grid_on</span>
-                  Buka Batch Mode
+                  Batch
                 </Link>
               </div>
             </div>
@@ -312,6 +401,8 @@ export default function DetailedInputATL() {
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                   {studentOptions.map((student) => {
                     const active = selectedStudent?.id === student.id;
+                    const topicScore = studentTopicScores[student.id];
+                    const hasTopicScore = Number.isFinite(topicScore);
                     return (
                       <button
                         key={student.id}
@@ -333,7 +424,9 @@ export default function DetailedInputATL() {
                           </div>
                         </div>
                         <div className="mt-2 flex items-center justify-between">
-                          <span className="text-[11px] font-semibold text-stone-500">{student.overall} overall</span>
+                          <span className={`text-[11px] font-black ${hasTopicScore ? "text-emerald-700" : "text-stone-500"}`}>
+                            {hasTopicScore ? `${topicScore}% overall` : "Belum dinilai"}
+                          </span>
                           {active && (
                             <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-white">
                               Sedang Dinilai
@@ -374,13 +467,6 @@ export default function DetailedInputATL() {
               <div className="rounded-[1.8rem] border border-stone-200 bg-white p-5 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
                 <div className="mb-4 flex items-center justify-between gap-2">
                   <h3 className="text-sm font-black uppercase tracking-[0.18em] text-stone-600">Skill Tabs</h3>
-                  <Link
-                    to="/input-atl/batch"
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5"
-                  >
-                    <span className="material-symbols-outlined text-[15px]">table_view</span>
-                    Batch Mode
-                  </Link>
                 </div>
                 <div className="grid auto-cols-max gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
                   {atlSections.map((group) => {
@@ -504,7 +590,7 @@ export default function DetailedInputATL() {
                           <div className="mt-5 grid gap-3 md:grid-cols-5">
                             {ratingOptions.map((item) => {
                               const option = item.label;
-                              const isActive = selectedRatings[metricKey] === option;
+                              const isActive = normalizeRatingLabel(selectedRatings[metricKey]) === option;
                               const colorMap = {
                                 NFI: {
                                   active: "bg-red-500 border-red-500 shadow-red-200",
@@ -713,13 +799,6 @@ export default function DetailedInputATL() {
               Kembali
             </Link>
             <div className="flex items-center gap-3">
-              <Link
-                to="/input-atl/batch"
-                className="inline-flex items-center gap-2 rounded-2xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm font-bold text-primary transition-all hover:bg-primary/10"
-              >
-                <span className="material-symbols-outlined text-[18px]">table_view</span>
-                Ke Batch Mode
-              </Link>
               <button onClick={handleSaveDraft} className="rounded-2xl border border-stone-200 bg-white px-6 py-3 text-sm font-semibold text-stone-700 transition-all hover:bg-stone-50">
                 Simpan Draft
               </button>

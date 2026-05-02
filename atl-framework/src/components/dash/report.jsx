@@ -113,6 +113,7 @@ export default function Report() {
     "Meeting Expectation": 80,
     "Developing Expectation": 60,
     "Progressing Toward Expectation": 40,
+    "Need Further Improvement": 20,
     "Need Improvement": 20
   };
   const ratingCodeMap = {
@@ -120,6 +121,7 @@ export default function Report() {
     "Meeting Expectation": "ME",
     "Developing Expectation": "DE",
     "Progressing Toward Expectation": "PTE",
+    "Need Further Improvement": "NFI",
     "Need Improvement": "NFI",
   };
   const performanceBandMap = {
