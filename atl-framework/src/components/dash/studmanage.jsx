@@ -1,7 +1,19 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "./sidebar";
 import { allStudentsData } from "./dummyStudents"; // Import data siswa
+import { dummyATL } from "./dummyATL";
+import { getClassAnalytics } from "./atlAnalytics";
+
+const skillToneMap = {
+  Thinking: { text: "text-sky-600", bar: "from-sky-400 to-sky-600", dot: "bg-sky-500" },
+  Research: { text: "text-violet-600", bar: "from-violet-400 to-violet-600", dot: "bg-violet-500" },
+  Communication: { text: "text-fuchsia-600", bar: "from-fuchsia-400 to-fuchsia-600", dot: "bg-fuchsia-500" },
+  Social: { text: "text-lime-700", bar: "from-lime-400 to-lime-600", dot: "bg-lime-500" },
+  Collaboration: { text: "text-lime-700", bar: "from-lime-400 to-lime-600", dot: "bg-lime-500" },
+  "Self-management": { text: "text-red-600", bar: "from-red-400 to-red-600", dot: "bg-red-500" },
+};
+
+const getSkillTone = (category) => skillToneMap[category] || { text: "text-stone-600", bar: "from-stone-400 to-stone-600", dot: "bg-stone-500" };
 
 export default function StudManage() {
   const currentUser = {
@@ -15,75 +27,40 @@ export default function StudManage() {
   const [showClassInsight, setShowClassInsight] = useState(false);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
+  const [dataVersion, setDataVersion] = useState(0);
 
-  const students = allStudentsData[selectedClassLabel] || []; // Ambil data siswa berdasarkan kelas yang dipilih
-
-  const overallScores = students.map((student) => Number.parseInt(student.overall, 10));
-  const averageOverall = Math.round(
-    overallScores.reduce((total, score) => total + score, 0) / overallScores.length
-  );
-
-  const getLevelConfig = (score) => {
-    if (score >= 80) {
-      return {
-        label: "Exceeding",
-        range: "80-100",
-        color: "#10b981",
-        badgeClass: "bg-emerald-100 text-emerald-700",
-      };
-    }
-
-    if (score >= 70) {
-      return {
-        label: "Meeting",
-        range: "70-79",
-        color: "#3b82f6",
-        badgeClass: "bg-blue-100 text-blue-700",
-      };
-    }
-
-    if (score >= 50) {
-      return {
-        label: "Developing",
-        range: "50-69",
-        color: "#f59e0b",
-        badgeClass: "bg-amber-100 text-amber-700",
-      };
-    }
-
-    return {
-      label: "Emerging",
-      range: "0-49",
-      color: "#ef4444",
-      badgeClass: "bg-rose-100 text-rose-700",
+  useEffect(() => {
+    const syncData = () => {
+      const saved = localStorage.getItem("atl_framework_data");
+      if (saved) Object.assign(dummyATL, JSON.parse(saved));
+      setDataVersion((version) => version + 1);
     };
-  };
+    syncData();
+    window.addEventListener("focus", syncData);
+    window.addEventListener("storage", syncData);
+    window.addEventListener("atl-data-updated", syncData);
+    return () => {
+      window.removeEventListener("focus", syncData);
+      window.removeEventListener("storage", syncData);
+      window.removeEventListener("atl-data-updated", syncData);
+    };
+  }, []);
 
-  const averageLevel = getLevelConfig(averageOverall);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedClassLabel]);
 
-  const distribution = [
-    { key: "exceeding", label: "Exceeding", range: "80-100", color: "#10b981", count: 0 },
-    { key: "meeting", label: "Meeting", range: "70-79", color: "#3b82f6", count: 0 },
-    { key: "developing", label: "Developing", range: "50-69", color: "#f59e0b", count: 0 },
-    { key: "emerging", label: "Emerging", range: "0-49", color: "#ef4444", count: 0 },
-  ].map((item) => ({
-    ...item,
-    count: overallScores.filter((score) => {
-      if (item.key === "exceeding") return score >= 80;
-      if (item.key === "meeting") return score >= 70 && score <= 79;
-      if (item.key === "developing") return score >= 50 && score <= 69;
-      return score <= 49;
-    }).length,
-  }));
-
-  const dominantCategory = distribution.reduce((top, item) => (item.count > top.count ? item : top), distribution[0]);
-  const focusCounts = students.reduce((acc, student) => {
-    acc[student.focus] = (acc[student.focus] || 0) + 1;
-    return acc;
-  }, {});
-  const topFocus = Object.entries(focusCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "Communication";
+  const rawStudents = allStudentsData[selectedClassLabel] || [];
+  const classAnalytics = useMemo(() => getClassAnalytics(rawStudents, dummyATL), [selectedClassLabel, dataVersion]);
+  const students = classAnalytics.students;
+  const averageOverall = classAnalytics.average;
+  const averageLevel = classAnalytics.averageLevel;
+  const distribution = classAnalytics.distribution;
+  const dominantCategory = classAnalytics.dominantCategory;
+  const topFocus = classAnalytics.topFocus;
 
   const totalStudents = students.length;
+  const assessedStudents = classAnalytics.assessedCount;
   const totalPages = Math.ceil(students.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
@@ -92,8 +69,8 @@ export default function StudManage() {
     .map((item, index, array) => {
       const start = array
         .slice(0, index)
-        .reduce((total, current) => total + (current.count / totalStudents) * 100, 0);
-      const end = start + (item.count / totalStudents) * 100;
+        .reduce((total, current) => total + (assessedStudents ? (current.count / assessedStudents) * 100 : 0), 0);
+      const end = start + (assessedStudents ? (item.count / assessedStudents) * 100 : 0);
 
       return `${item.color} ${start}% ${end}%`;
     })
@@ -190,7 +167,9 @@ export default function StudManage() {
                     <div className="mt-5 h-1 w-full rounded-full bg-amber-300/20">
                       <div className="h-full rounded-full bg-gradient-to-r from-amber-300 via-amber-400 to-yellow-400" style={{ width: `${averageOverall}%` }} />
                     </div>
-                    <p className="mt-4 text-sm text-slate-400">Meningkat 4% dari periode lalu</p>
+                    <p className="mt-4 text-sm text-slate-400">
+                      {assessedStudents} dari {totalStudents} siswa sudah memiliki nilai tersimpan
+                    </p>
                   </div>
                 </div>
 
@@ -274,8 +253,8 @@ export default function StudManage() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-stone-900">
                           <div className="flex items-center gap-2">
                             <span>{student.overall}</span>
-                            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${getLevelConfig(Number.parseInt(student.overall, 10)).badgeClass}`}>
-                              {getLevelConfig(Number.parseInt(student.overall, 10)).label}
+                            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${student.overallScore === null ? "bg-stone-100 text-stone-500" : student.level.badgeClass}`}>
+                              {student.overallScore === null ? "No Data" : student.level.label}
                             </span>
                           </div>
                         </td>
@@ -372,10 +351,10 @@ export default function StudManage() {
                       <div className="rounded-2xl bg-white p-4 ring-1 ring-stone-200">
                         <p className="text-xs uppercase tracking-[0.22em] text-stone-500">Kategori Dominan</p>
                         <p className="mt-2 text-lg font-black text-stone-900">
-                          {distribution.reduce((top, item) => (item.count > top.count ? item : top), distribution[0]).label}
+                          {dominantCategory.label}
                         </p>
                         <p className="mt-2 text-sm text-stone-500">
-                          {distribution.reduce((top, item) => (item.count > top.count ? item : top), distribution[0]).count} siswa
+                          {dominantCategory.count || 0} siswa
                         </p>
                       </div>
                       <div className="rounded-2xl bg-white p-4 ring-1 ring-stone-200">
@@ -388,51 +367,29 @@ export default function StudManage() {
                     <div className="mt-5 rounded-2xl bg-white p-5 ring-1 ring-stone-200">
                       <h3 className="text-lg font-bold text-stone-900">Distribusi ATL Skills</h3>
                       <div className="mt-5 space-y-4">
-                        <div>
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="text-sm font-semibold text-stone-700">Self-Management</span>
-                            <span className="text-sm font-bold text-emerald-600">82%</span>
+                        {classAnalytics.categoryAverages.length > 0 ? (
+                          classAnalytics.categoryAverages.map((item) => {
+                            const tone = getSkillTone(item.category);
+                            return (
+                              <div key={item.category}>
+                                <div className="mb-2 flex items-center justify-between">
+                                  <span className="text-sm font-semibold text-stone-700">{item.category}</span>
+                                  <span className={`text-sm font-bold ${tone.text}`}>{item.score}%</span>
+                                </div>
+                                <div className="h-2 rounded-full bg-stone-200">
+                                  <div
+                                    className={`h-full rounded-full bg-gradient-to-r ${tone.bar}`}
+                                    style={{ width: `${item.score}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-5 text-sm text-stone-500">
+                            Belum ada nilai ATL tersimpan untuk kelas ini.
                           </div>
-                          <div className="h-2 rounded-full bg-stone-200">
-                            <div className="h-full w-[82%] rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600"></div>
-                          </div>
-                        </div>
-                        <div>
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="text-sm font-semibold text-stone-700">Thinking Skills</span>
-                            <span className="text-sm font-bold text-blue-600">78%</span>
-                          </div>
-                          <div className="h-2 rounded-full bg-stone-200">
-                            <div className="h-full w-[78%] rounded-full bg-gradient-to-r from-blue-400 to-blue-600"></div>
-                          </div>
-                        </div>
-                        <div>
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="text-sm font-semibold text-stone-700">Communication</span>
-                            <span className="text-sm font-bold text-purple-600">71%</span>
-                          </div>
-                          <div className="h-2 rounded-full bg-stone-200">
-                            <div className="h-full w-[71%] rounded-full bg-gradient-to-r from-purple-400 to-purple-600"></div>
-                          </div>
-                        </div>
-                        <div>
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="text-sm font-semibold text-stone-700">Social Skills</span>
-                            <span className="text-sm font-bold text-amber-600">75%</span>
-                          </div>
-                          <div className="h-2 rounded-full bg-stone-200">
-                            <div className="h-full w-[75%] rounded-full bg-gradient-to-r from-amber-400 to-amber-600"></div>
-                          </div>
-                        </div>
-                        <div>
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="text-sm font-semibold text-stone-700">Research Skills</span>
-                            <span className="text-sm font-bold text-rose-600">73%</span>
-                          </div>
-                          <div className="h-2 rounded-full bg-stone-200">
-                            <div className="h-full w-[73%] rounded-full bg-gradient-to-r from-rose-400 to-rose-600"></div>
-                          </div>
-                        </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -449,7 +406,7 @@ export default function StudManage() {
 
                       <div className="w-full space-y-3">
                         {distribution.map((item) => {
-                          const percentage = Math.round((item.count / totalStudents) * 100);
+                          const percentage = assessedStudents ? Math.round((item.count / assessedStudents) * 100) : 0;
 
                           return (
                             <div key={item.key} className="flex items-start justify-between gap-3 rounded-2xl bg-white px-4 py-3 ring-1 ring-stone-200">

@@ -3,6 +3,8 @@ import Sidebar from "./sidebar";
 import { dummyATL } from "./dummyATL";
 import { allStudentsData } from "./dummyStudents";
 import schoolLogo from "../../assets/Cita_Hati_Christian_School_Logo.jpeg";
+import { getReport, getStudents, hydrateTopic } from "../../services/atlApi";
+import { getSubjectData } from "../../services/topicCatalog";
 
 export default function Report() {
   const currentUser = { name: "Joko Wiryanto", role: "Guru / Evaluator" };
@@ -15,6 +17,9 @@ export default function Report() {
   const [itemsPerPage, setItemsPerPage] = useState(5);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedDetailStudent, setSelectedDetailStudent] = useState(null);
+  const [apiStudents, setApiStudents] = useState(allStudentsData[selectedClass] || []);
+  const [apiReport, setApiReport] = useState(null);
+  const [subjects, setSubjects] = useState(getSubjectData);
 
   // State untuk memicu re-render saat data di localStorage berubah
   const [dataVersion, setDataVersion] = useState(0);
@@ -45,14 +50,41 @@ export default function Report() {
   }, [syncDataFromStorage]);
 
   useEffect(() => {
+    let cancelled = false;
+    getStudents(selectedClass).then((students) => {
+      if (!cancelled) setApiStudents(students);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClass]);
+
+  useEffect(() => {
+    if (!selectedTopic) return undefined;
+    let cancelled = false;
+    Promise.all([hydrateTopic(selectedTopic), getReport(selectedClass, selectedTopic)]).then(([, report]) => {
+      if (!cancelled) {
+        setApiReport(report);
+        setDataVersion((v) => v + 1);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClass, selectedTopic]);
+
+  useEffect(() => {
+    const syncTopics = () => setSubjects(getSubjectData());
     window.addEventListener("focus", syncDataFromStorage);
     window.addEventListener("storage", syncDataFromStorage);
     window.addEventListener("atl-data-updated", syncDataFromStorage);
+    window.addEventListener("atl-topics-updated", syncTopics);
 
     return () => {
       window.removeEventListener("focus", syncDataFromStorage);
       window.removeEventListener("storage", syncDataFromStorage);
       window.removeEventListener("atl-data-updated", syncDataFromStorage);
+      window.removeEventListener("atl-topics-updated", syncTopics);
     };
   }, [syncDataFromStorage]);
 
@@ -61,29 +93,6 @@ export default function Report() {
     localStorage.setItem("report_filter_pref", JSON.stringify(pref));
     alert(`View filter disimpan: ${selectedClass} - ${selectedSubject} - ${selectedTopic}`);
   };
-
-  const subjects = [
-    { id: "singing", label: "Singing", topics: [
-      { id: "singing_christmas_carol", label: "Christmas Carol" },
-      { id: "singing_choir", label: "Choir" },
-      { id: "singing_vocal_technique", label: "Vocal Technique" },
-      { id: "singing_music_theory_basics", label: "Music Theory Basics" },
-      { id: "singing_performance_practice", label: "Performance Practice" }
-    ]},
-    { id: "ipa", label: "IPA (Sains)", topics: [
-      { id: "ipa_energi_perubahan", label: "Energi Perubahan" },
-      { id: "ipa_tata_surya", label: "Tata Surya" },
-      { id: "ipa_sistem_tubuh", label: "Sistem Tubuh" },
-      { id: "ipa_ekosistem", label: "Ekosistem" }
-    ]},
-    { id: "math", label: "Math", topics: [
-      { id: "math_linear_equations", label: "Linear Equations" },
-      { id: "math_quadratic_functions", label: "Quadratic Functions" },
-      { id: "math_geometry", label: "Geometry" },
-      { id: "math_trigonometry", label: "Trigonometry" },
-      { id: "math_statistics", label: "Statistics" }
-    ]}
-  ];
 
   const currentSubject = useMemo(
     () => subjects.find((s) => s.id === selectedSubject) || subjects[0],
@@ -109,12 +118,12 @@ export default function Report() {
 
   // Mapping label ke nilai numerik untuk kalkulasi
   const ratingMap = {
-    "Exceeding Expectation": 100,
-    "Meeting Expectation": 80,
-    "Developing Expectation": 60,
-    "Progressing Toward Expectation": 40,
-    "Need Further Improvement": 20,
-    "Need Improvement": 20
+    "Exceeding Expectation": 0.9,
+    "Meeting Expectation": 0.7,
+    "Developing Expectation": 0.5,
+    "Progressing Toward Expectation": 0.3,
+    "Need Further Improvement": 0.1,
+    "Need Improvement": 0.1
   };
   const ratingCodeMap = {
     "Exceeding Expectation": "EE",
@@ -134,14 +143,16 @@ export default function Report() {
 
   // Data mentah kalkulasi (Skor & Kategori)
   const allCalculatedData = useMemo(() => {
-    const students = allStudentsData[selectedClass] || [];
+    if (apiReport?.students?.length > 0) return apiReport.students;
+
+    const students = apiStudents.length > 0 ? apiStudents : allStudentsData[selectedClass] || [];
     const weights = dummyATL.savedWeights?.[selectedTopic] || {};
     const criteriaList = dummyATL[selectedTopic] || [];
 
     return students.map(student => {
       const assessments = dummyATL.savedAssessments?.[student.id]?.[selectedTopic] || {};
-      const catScores = { Thinking: 0, Social: 0, Communication: 0, "Self-Management": 0, Research: 0 };
-      const catWeights = { Thinking: 0, Social: 0, Communication: 0, "Self-Management": 0, Research: 0 };
+      const catScores = { "Thinking Skills": 0, "Social Skills": 0, "Communication Skills": 0, "Self-Management Skills": 0, "Research Skills": 0 };
+      const catWeights = { "Thinking Skills": 0, "Social Skills": 0, "Communication Skills": 0, "Self-Management Skills": 0, "Research Skills": 0 };
       
       let totalWeightedScore = 0;
       let totalWeight = 0;
@@ -149,7 +160,8 @@ export default function Report() {
       criteriaList.forEach(crit => {
         crit.atl.forEach(atlName => {
           const weightKey = `${crit.kriteria} (${atlName})`;
-          const weight = parseFloat(weights[weightKey]) || 0;
+          const packageWeight = Object.values(weights.packages || {}).find((pkg) => pkg.title === crit.kriteria)?.weights?.[atlName];
+          const weight = parseFloat(packageWeight ?? weights[weightKey] ?? weights[atlName]) || 0;
           
           const ratingKey = `${selectedTopic}_${crit.kriteria}_${atlName}`;
           const ratingLabel = assessments[ratingKey]; 
@@ -159,14 +171,21 @@ export default function Report() {
             totalWeightedScore += (val * weight);
             totalWeight += weight;
 
-            catScores[atlName] += (val * weight);
-            catWeights[atlName] += weight;
+            const categories = crit.atlCategories || (crit.category ? crit.category.split(",").map((name) => name.trim()).filter(Boolean) : [atlName]);
+            categories.forEach((categoryName) => {
+              if (!Object.prototype.hasOwnProperty.call(catScores, categoryName)) {
+                catScores[categoryName] = 0;
+                catWeights[categoryName] = 0;
+              }
+              catScores[categoryName] += (val * 100 * weight);
+              catWeights[categoryName] += weight;
+            });
           }
         });
       });
 
       // Jika tidak ada kriteria/bobot, skor default
-      const finalScore = totalWeight > 0 ? (totalWeightedScore / totalWeight) : 0;
+      const finalScore = totalWeight > 0 ? ((totalWeightedScore / totalWeight) * 100) : 0;
       
       return {
         ...student,
@@ -180,7 +199,7 @@ export default function Report() {
         }, {})
       };
     });
-  }, [selectedClass, selectedTopic, dataVersion]);
+  }, [selectedClass, selectedTopic, dataVersion, apiStudents, apiReport]);
 
   // Pagination logic
   const calculatedReports = useMemo(() => {
@@ -196,9 +215,11 @@ export default function Report() {
 
   // Analytics Logic
   const stats = useMemo(() => {
+    if (apiReport?.stats) return apiReport.stats;
+
     const assessed = allCalculatedData.filter(s => s.rawScore > 0).length;
     const dist = { "Sangat Baik": 0, "Baik": 0, "Cukup": 0, "Kurang": 0, "Belum Dinilai": 0 };
-    const catAvg = { Thinking: 0, Social: 0, Communication: 0, "Self-Management": 0, Research: 0 };
+    const catAvg = { "Thinking Skills": 0, "Social Skills": 0, "Communication Skills": 0, "Self-Management Skills": 0, "Research Skills": 0 };
 
     allCalculatedData.forEach(s => {
       if (s.predikat === "-") {
@@ -219,7 +240,7 @@ export default function Report() {
     const strongest = [...cats].sort((a, b) => b.val - a.val)[0];
 
     return { assessed, dist, cats, strongest };
-  }, [allCalculatedData]);
+  }, [allCalculatedData, apiReport]);
 
   const distributionConfig = [
     { key: "Sangat Baik", color: "#10b981" },
@@ -256,6 +277,17 @@ export default function Report() {
 
   const buildStudentDetailReport = useCallback(
     (student) => {
+      if (Array.isArray(student.detailItems) && student.detailItems.length > 0) {
+        return {
+          ...student,
+          summaryParagraph:
+            student.summaryParagraph ||
+            `${student.name} achieved an ATL score of ${student.score} in ${currentTopicLabel}.`,
+          assessedCount: student.assessedCount ?? student.detailItems.length,
+          totalIndicators: student.totalIndicators ?? student.detailItems.length,
+        };
+      }
+
       const criteriaList = dummyATL[selectedTopic] || [];
       const assessments = dummyATL.savedAssessments?.[student.id]?.[selectedTopic] || {};
 
@@ -367,7 +399,7 @@ export default function Report() {
                   ATL Analysis Report
                 </h1>
                 <p className="text-sm text-text-sub-light">
-                  Hasil analisis model Fuzzy AHP untuk 5 kategori ATL (Approaches to Learning).
+                  Hasil analisis ATL berbasis importance weight dan rubric performance.
                 </p>
               </div>
 
@@ -495,7 +527,7 @@ export default function Report() {
                   <span className="material-symbols-outlined text-3xl text-orange-500">emoji_events</span>
                   <div>
                     <span className="block text-xs font-semibold text-stone-500">Kategori Terkuat</span>
-                    <span className="mt-1 block text-lg font-black text-text-main-light lg:text-xl">{stats.strongest?.name || "-"} Skills</span>
+                    <span className="mt-1 block text-lg font-black text-text-main-light lg:text-xl">{stats.strongest?.name || "-"}</span>
                   </div>
                 </div>
               </div>
@@ -563,7 +595,7 @@ export default function Report() {
                   {stats.cats.map((cat) => (
                     <div key={cat.name}>
                       <div className="mb-1 flex items-center justify-between text-xs font-medium text-stone-600">
-                        <span>{cat.name} Skills</span>
+                        <span>{cat.name}</span>
                         <span className="font-bold text-stone-900">{cat.val}</span>
                       </div>
                       <div className="h-2.5 w-full overflow-hidden rounded-full bg-stone-200">

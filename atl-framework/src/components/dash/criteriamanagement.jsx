@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { dummyATL, saveATLData } from "./dummyATL";
+import { createContext, createCriterion, deleteCriterion, getATLHierarchy, getCriteria, updateCriterion } from "../../services/atlApi";
+import { addCustomSubtopic, getSubjectData } from "../../services/topicCatalog";
 
 // ATL Icons and Colors
 const atlConfig = {
@@ -8,90 +10,63 @@ const atlConfig = {
   Social: { icon: "group", color: "bg-green-100 text-green-700", bgLight: "bg-green-50" },
   "Self-Management": { icon: "self_improvement", color: "bg-orange-100 text-orange-700", bgLight: "bg-orange-50" },
   Research: { icon: "explore", color: "bg-red-100 text-red-700", bgLight: "bg-red-50" },
+  "Thinking Skills": { icon: "psychology", color: "bg-blue-100 text-blue-700", bgLight: "bg-blue-50" },
+  "Communication Skills": { icon: "chat", color: "bg-purple-100 text-purple-700", bgLight: "bg-purple-50" },
+  "Social Skills": { icon: "group", color: "bg-green-100 text-green-700", bgLight: "bg-green-50" },
+  "Self-Management Skills": { icon: "self_improvement", color: "bg-orange-100 text-orange-700", bgLight: "bg-orange-50" },
+  "Research Skills": { icon: "explore", color: "bg-red-100 text-red-700", bgLight: "bg-red-50" },
+  "Critical Thingking": { icon: "psychology", color: "bg-blue-100 text-blue-700", bgLight: "bg-blue-50" },
+  "Creative Thingking": { icon: "lightbulb", color: "bg-blue-100 text-blue-700", bgLight: "bg-blue-50" },
+  InformationTransfer: { icon: "sync_alt", color: "bg-blue-100 text-blue-700", bgLight: "bg-blue-50" },
+  "Reflection / Metacognitive": { icon: "neurology", color: "bg-blue-100 text-blue-700", bgLight: "bg-blue-50" },
+  "Textual Literacy": { icon: "article", color: "bg-red-100 text-red-700", bgLight: "bg-red-50" },
+  "Media Literacy": { icon: "perm_media", color: "bg-red-100 text-red-700", bgLight: "bg-red-50" },
+  "Ethical use of information": { icon: "verified_user", color: "bg-red-100 text-red-700", bgLight: "bg-red-50" },
+  "Exchanging-information": { icon: "forum", color: "bg-purple-100 text-purple-700", bgLight: "bg-purple-50" },
+  "Literacy skills": { icon: "menu_book", color: "bg-purple-100 text-purple-700", bgLight: "bg-purple-50" },
+  "ICT skills": { icon: "devices", color: "bg-purple-100 text-purple-700", bgLight: "bg-purple-50" },
+  "Interpersonal relationships": { icon: "groups", color: "bg-green-100 text-green-700", bgLight: "bg-green-50" },
+  "Social-emotional intelligence": { icon: "diversity_3", color: "bg-green-100 text-green-700", bgLight: "bg-green-50" },
+  "Organization skills": { icon: "event_note", color: "bg-orange-100 text-orange-700", bgLight: "bg-orange-50" },
+  "State of Mind": { icon: "self_improvement", color: "bg-orange-100 text-orange-700", bgLight: "bg-orange-50" },
 };
+const fallbackAtlConfig = { icon: "label", color: "bg-stone-100 text-stone-700", bgLight: "bg-stone-50" };
 
 export default function criteriamanagement() {
-  // Subjects with colors
-  const subjects = [
-    {
-      id: "singing",
-      label: "Singing",
-      icon: "music_note",
-      color: "rose",
-      bgColor: "bg-rose-50",
-      borderColor: "border-rose-200",
-      textColor: "text-rose-700",
-      badgeColor: "bg-rose-100 text-rose-700",
-      accentBorder: "border-rose-300",
-    },
-    {
-      id: "ipa",
-      label: "IPA (Sains)",
-      icon: "science",
-      color: "emerald",
-      bgColor: "bg-emerald-50",
-      borderColor: "border-emerald-200",
-      textColor: "text-emerald-700",
-      badgeColor: "bg-emerald-100 text-emerald-700",
-      accentBorder: "border-emerald-300",
-    },
-    {
-      id: "math",
-      label: "Mathematics",
-      icon: "calculate",
-      color: "amber",
-      bgColor: "bg-amber-50",
-      borderColor: "border-amber-200",
-      textColor: "text-amber-700",
-      badgeColor: "bg-amber-100 text-amber-700",
-      accentBorder: "border-amber-300",
-    },
-  ];
-
-  // Sub-topics structure
-  const subtopics = {
-    singing: [
-      { id: "singing_christmas_carol", label: "Christmas Carol", description: "Musik & Gerak Berkelompok" },
-      { id: "singing_choir", label: "Choir", description: "Paduan Suara" },
-      { id: "singing_vocal_technique", label: "Vocal Technique", description: "Latihan Teknik Vokal" },
-      { id: "singing_music_theory_basics", label: "Music Theory Basics", description: "Dasar Teori Musik" },
-      { id: "singing_performance_practice", label: "Performance Practice", description: "Latihan Pertunjukan" },
-    ],
-    ipa: [
-      { id: "ipa_energi_perubahan", label: "Energi Perubahan", description: "Eksperimen Energi" },
-      { id: "ipa_sistem_tubuh", label: "Sistem Tubuh", description: "Anatomi dan Fisiologi" },
-      { id: "ipa_ekosistem", label: "Ekosistem", description: "Interaksi Makhluk Hidup" },
-      { id: "ipa_tata_surya", label: "Tata Surya", description: "Planet dan Benda Langit" },
-    ],
-    math: [
-      { id: "math_linear_equations", label: "Linear Equations", description: "Persamaan Linear" },
-      { id: "math_quadratic_functions", label: "Quadratic Functions", description: "Fungsi Kuadrat" },
-      { id: "math_geometry", label: "Geometry", description: "Geometri & Bentuk" },
-      { id: "math_trigonometry", label: "Trigonometry", description: "Trigonometri" },
-      { id: "math_statistics", label: "Statistics", description: "Statistika & Data" },
-    ],
+  const subjectStyles = {
+    singing: { icon: "music_note", bgColor: "bg-rose-50", borderColor: "border-rose-200", textColor: "text-rose-700", badgeColor: "bg-rose-100 text-rose-700", accentBorder: "border-rose-300" },
+    ipa: { icon: "science", bgColor: "bg-emerald-50", borderColor: "border-emerald-200", textColor: "text-emerald-700", badgeColor: "bg-emerald-100 text-emerald-700", accentBorder: "border-emerald-300" },
+    math: { icon: "calculate", bgColor: "bg-amber-50", borderColor: "border-amber-200", textColor: "text-amber-700", badgeColor: "bg-amber-100 text-amber-700", accentBorder: "border-amber-300" },
   };
 
-  // ATL options
-  const atlOptions = [
-    "Thinking",
-    "Communication",
-    "Social",
-    "Self-Management",
-    "Research",
-  ];
+  const buildSubjects = () =>
+    getSubjectData().map((subject) => ({
+      ...subject,
+      ...(subjectStyles[subject.id] || subjectStyles.singing),
+    }));
 
   // State management
+  const [subjects, setSubjects] = useState(buildSubjects);
   const [selectedSubject, setSelectedSubject] = useState("singing");
   const [selectedSubtopic, setSelectedSubtopic] = useState("singing_christmas_carol");
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
   const [, setDataVersion] = useState(0);
+  const [atlHierarchy, setAtlHierarchy] = useState([]);
+  const [newSubtopicName, setNewSubtopicName] = useState("");
+  const [newSubtopicDescription, setNewSubtopicDescription] = useState("");
 
   // Form state
   const [formData, setFormData] = useState({
     kriteria: "",
     atl: [],
+    criteriaTopic: "",
+    categoryId: "",
+    categoryIds: [],
+    subskillId: "",
+    subskillIds: [],
+    subskillName: "",
+    categoryName: "",
     levels: {
       NFI: "",
       PTE: "",
@@ -106,14 +81,87 @@ export default function criteriamanagement() {
 
   // Get current subject config
   const currentSubjectConfig = subjects.find((s) => s.id === selectedSubject);
-  const currentSubtopics = subtopics[selectedSubject] || [];
+  const currentSubtopics = subjects.find((subject) => subject.id === selectedSubject)?.topics || [];
 
-  const handleATLToggle = (atl) => {
+  const findSubskillMeta = (value, categoryName) => {
+    for (const category of atlHierarchy) {
+      for (const subskill of category.subskills || []) {
+        if (
+          String(subskill.id) === String(value) ||
+          subskill.name === value ||
+          (categoryName && category.name === categoryName && subskill.name === value)
+        ) {
+          return { category, subskill };
+        }
+      }
+    }
+    return null;
+  };
+
+  const selectedCategories = atlHierarchy.filter((category) => (formData.categoryIds || []).map(String).includes(String(category.id)));
+  const selectedCategorySubskills = selectedCategories.flatMap((category) => category.subskills || []);
+  const selectedSubskills = selectedCategorySubskills.filter((subskill) => (formData.subskillIds || []).map(String).includes(String(subskill.id)));
+  const selectedCategory = selectedCategories[0] || atlHierarchy[0];
+  const selectedSubskill = selectedSubskills[0] || selectedCategorySubskills[0] || selectedCategory?.subskills?.[0];
+
+  const findCategoryForSubskill = (subskillIdOrName) =>
+    atlHierarchy.find((category) =>
+      (category.subskills || []).some(
+        (subskill) => String(subskill.id) === String(subskillIdOrName) || subskill.name === subskillIdOrName
+      )
+    );
+
+  const getCriteriaSubskillNames = (criteria) =>
+    Array.isArray(criteria.atl) ? criteria.atl : criteria.atl ? [criteria.atl] : [];
+
+  const getCriteriaCategoryNames = (criteria) => {
+    if (Array.isArray(criteria.atlCategories) && criteria.atlCategories.length > 0) return criteria.atlCategories;
+    if (Array.isArray(criteria.categories) && criteria.categories.length > 0) return criteria.categories;
+    if (criteria.category) return criteria.category.split(",").map((item) => item.trim()).filter(Boolean);
+    return [];
+  };
+
+  const setCategorySelection = (category) => {
+    const currentCategoryIds = (formData.categoryIds || []).map(String);
+    const isActive = currentCategoryIds.includes(String(category.id));
+    const categorySubskillIds = (category.subskills || []).map((subskill) => subskill.id);
+    const nextCategoryIds = isActive
+      ? currentCategoryIds.filter((id) => id !== String(category.id))
+      : [...currentCategoryIds, String(category.id)];
+    const nextSubskillIds = isActive
+      ? (formData.subskillIds || []).filter((id) => !categorySubskillIds.map(String).includes(String(id)))
+      : Array.from(new Set([...(formData.subskillIds || []), ...categorySubskillIds]));
+    const nextSubskills = atlHierarchy
+      .flatMap((item) => item.subskills || [])
+      .filter((subskill) => nextSubskillIds.map(String).includes(String(subskill.id)));
+
     setFormData((prev) => ({
       ...prev,
-      atl: prev.atl.includes(atl)
-        ? prev.atl.filter((a) => a !== atl)
-        : [...prev.atl, atl],
+      categoryIds: nextCategoryIds,
+      categoryId: nextCategoryIds[0] || "",
+      categoryName: atlHierarchy.find((item) => String(item.id) === String(nextCategoryIds[0]))?.name || "",
+      subskillIds: nextSubskillIds,
+      subskillId: nextSubskillIds[0] || "",
+      subskillName: nextSubskills[0]?.name || "",
+      atl: nextSubskills.map((subskill) => subskill.name),
+    }));
+  };
+
+  const setSubskillSelection = (subskill) => {
+    const current = (formData.subskillIds || []).map(String);
+    const isActive = current.includes(String(subskill.id));
+    const nextSubskillIds = isActive
+      ? current.filter((id) => id !== String(subskill.id))
+      : [...current, String(subskill.id)];
+    const nextSubskills = atlHierarchy
+      .flatMap((item) => item.subskills || [])
+      .filter((item) => nextSubskillIds.map(String).includes(String(item.id)));
+    setFormData((prev) => ({
+      ...prev,
+      subskillIds: nextSubskillIds,
+      subskillId: nextSubskillIds[0] || "",
+      subskillName: nextSubskills[0]?.name || "",
+      atl: nextSubskills.map((item) => item.name),
     }));
   };
 
@@ -135,6 +183,66 @@ export default function criteriamanagement() {
     setDataVersion((v) => v + 1);
     window.dispatchEvent(new Event("atl-data-updated"));
   };
+
+  useEffect(() => {
+    const syncTopics = () => setSubjects(buildSubjects());
+    window.addEventListener("atl-topics-updated", syncTopics);
+    return () => window.removeEventListener("atl-topics-updated", syncTopics);
+  }, []);
+
+  const handleAddSubtopic = async () => {
+    if (!newSubtopicName.trim()) {
+      alert("Nama subtopik wajib diisi.");
+      return;
+    }
+
+    const created = addCustomSubtopic(selectedSubject, newSubtopicName, newSubtopicDescription);
+    if (!created) return;
+
+    const nextSubjects = buildSubjects();
+    setSubjects(nextSubjects);
+    dummyATL[created.id] = dummyATL[created.id] || [];
+    persistATLChanges();
+
+    const subject = nextSubjects.find((item) => item.id === selectedSubject);
+    await createContext({
+      grade: "Grade 3",
+      subjectName: subject?.label || selectedSubject,
+      unitName: created.label,
+      description: created.description,
+      legacyTopicCode: created.id,
+    });
+
+    setSelectedSubtopic(created.id);
+    setNewSubtopicName("");
+    setNewSubtopicDescription("");
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([getCriteria(selectedSubtopic), getATLHierarchy()]).then(([, hierarchy]) => {
+      if (cancelled) return;
+      setAtlHierarchy(hierarchy || []);
+      const firstCategory = hierarchy?.[0];
+      const firstSubskill = firstCategory?.subskills?.[0];
+      if (!formData.categoryId && firstCategory && firstSubskill) {
+        setFormData((prev) => ({
+          ...prev,
+          categoryId: firstCategory.id,
+          categoryIds: [firstCategory.id],
+          categoryName: firstCategory.name,
+          subskillId: firstSubskill.id,
+          subskillIds: firstCategory.subskills?.map((subskill) => subskill.id) || [firstSubskill.id],
+          subskillName: firstSubskill.name,
+          atl: firstCategory.subskills?.map((subskill) => subskill.name) || [firstSubskill.name],
+        }));
+      }
+      if (!cancelled) setDataVersion((v) => v + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSubtopic]);
 
   const syncCriterionReferences = (topicId, previousCriterion, nextCriterion) => {
     if (!previousCriterion || !nextCriterion) return;
@@ -226,10 +334,18 @@ export default function criteriamanagement() {
     }
   };
 
-  const handleAddCriteria = () => {
+  const handleAddCriteria = async () => {
+    const chosenSubskills = selectedSubskills.length > 0 ? selectedSubskills : selectedCategorySubskills;
+    const chosenCategoryIds = Array.from(
+      new Set(chosenSubskills.map((subskill) => findCategoryForSubskill(subskill.id)?.id).filter(Boolean))
+    );
+    const chosenCategories = atlHierarchy.filter((category) => chosenCategoryIds.map(String).includes(String(category.id)));
+
     if (
+      !formData.criteriaTopic.trim() ||
       !formData.kriteria ||
-      formData.atl.length === 0 ||
+      chosenCategories.length === 0 ||
+      chosenSubskills.length === 0 ||
       !Object.values(formData.levels).every((v) => v.trim())
     ) {
       alert("Mohon isi semua field!");
@@ -241,8 +357,15 @@ export default function criteriamanagement() {
     }
 
     const normalizedFormData = {
+      criteriaTopic: formData.criteriaTopic.trim(),
       kriteria: formData.kriteria.trim(),
-      atl: [...formData.atl],
+      atl: chosenSubskills.map((subskill) => subskill.name),
+      atlCategories: chosenCategories.map((category) => category.name),
+      category: chosenCategories.map((category) => category.name).join(", "),
+      categoryIds: chosenCategories.map((category) => category.id),
+      subskillIds: chosenSubskills.map((subskill) => subskill.id),
+      subskillId: chosenSubskills[0]?.id || "",
+      subskillName: chosenSubskills.map((subskill) => subskill.name).join(", "),
       levels: { ...formData.levels },
     };
 
@@ -251,17 +374,50 @@ export default function criteriamanagement() {
       const previousCriterion = dummyATL[selectedSubtopic][editingIndex];
       dummyATL[selectedSubtopic][editingIndex] = normalizedFormData;
       syncCriterionReferences(selectedSubtopic, previousCriterion, normalizedFormData);
+      const savedCriterion = await updateCriterion(previousCriterion.id, normalizedFormData);
+      if (savedCriterion?.id) {
+        dummyATL[selectedSubtopic][editingIndex] = {
+          ...dummyATL[selectedSubtopic][editingIndex],
+          id: savedCriterion.id,
+          category: savedCriterion.category || normalizedFormData.category,
+          atlCategories: savedCriterion.atlCategories || normalizedFormData.atlCategories,
+          atl: savedCriterion.atl || normalizedFormData.atl,
+          subskillId: savedCriterion.subskillId || normalizedFormData.subskillId,
+          subskillIds: savedCriterion.subskillIds || normalizedFormData.subskillIds,
+          criteriaTopic: savedCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
+        };
+      }
       setEditingIndex(null);
     } else {
       // Add new criteria
       dummyATL[selectedSubtopic].push(normalizedFormData);
+      const createdCriterion = await createCriterion(selectedSubtopic, normalizedFormData);
+      if (createdCriterion?.id) {
+        dummyATL[selectedSubtopic][dummyATL[selectedSubtopic].length - 1] = {
+          ...normalizedFormData,
+          id: createdCriterion.id,
+          category: createdCriterion.category || normalizedFormData.category,
+          atlCategories: createdCriterion.atlCategories || normalizedFormData.atlCategories,
+          atl: createdCriterion.atl || normalizedFormData.atl,
+          subskillId: createdCriterion.subskillId || normalizedFormData.subskillId,
+          subskillIds: createdCriterion.subskillIds || normalizedFormData.subskillIds,
+          criteriaTopic: createdCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
+        };
+      }
     }
 
     persistATLChanges();
 
     setFormData({
       kriteria: "",
-      atl: [],
+      criteriaTopic: "",
+      atl: selectedSubskills.map((subskill) => subskill.name),
+      categoryId: selectedCategory?.id || "",
+      categoryIds: formData.categoryIds || [],
+      categoryName: selectedCategory?.name || "",
+      subskillId: selectedSubskill?.id || "",
+      subskillIds: formData.subskillIds || [],
+      subskillName: selectedSubskill?.name || "",
       levels: {
         NFI: "",
         PTE: "",
@@ -275,20 +431,42 @@ export default function criteriamanagement() {
 
   const handleEditCriteria = (index) => {
     const existing = dummyATL[selectedSubtopic][index];
+    const existingSubskillNames = getCriteriaSubskillNames(existing);
+    const existingSubskillIds = Array.isArray(existing.subskillIds) ? existing.subskillIds : [];
+    const metas = [
+      ...existingSubskillIds.map((id) => findSubskillMeta(id)),
+      ...existingSubskillNames.map((name) => findSubskillMeta(name)),
+    ].filter(Boolean);
+    const uniqueCategories = Array.from(new Map(metas.map((meta) => [String(meta.category.id), meta.category])).values());
+    const uniqueSubskills = Array.from(new Map(metas.map((meta) => [String(meta.subskill.id), meta.subskill])).values());
+    const fallbackMeta =
+      findSubskillMeta(existing.subskillId) ||
+      findSubskillMeta(existing.atl?.[0], existing.category) ||
+      { category: selectedCategory, subskill: selectedSubskill };
+    const finalCategories = uniqueCategories.length > 0 ? uniqueCategories : [fallbackMeta.category].filter(Boolean);
+    const finalSubskills = uniqueSubskills.length > 0 ? uniqueSubskills : [fallbackMeta.subskill].filter(Boolean);
     setFormData({
+      criteriaTopic: existing.criteriaTopic || "",
       kriteria: existing.kriteria,
-      atl: [...(existing.atl || [])],
+      atl: finalSubskills.map((subskill) => subskill.name),
+      categoryId: finalCategories[0]?.id || "",
+      categoryIds: finalCategories.map((category) => category.id),
+      categoryName: finalCategories.map((category) => category.name).join(", ") || existing.category || "",
+      subskillId: finalSubskills[0]?.id || existing.subskillId || "",
+      subskillIds: finalSubskills.map((subskill) => subskill.id),
+      subskillName: finalSubskills.map((subskill) => subskill.name).join(", ") || existing.atl?.[0] || "",
       levels: { ...existing.levels },
     });
     setEditingIndex(index);
     setShowAddForm(true);
   };
 
-  const handleDeleteCriteria = (index) => {
+  const handleDeleteCriteria = async (index) => {
     if (confirm("Apakah Anda yakin ingin menghapus kriteria ini?")) {
       const deletedCriterion = dummyATL[selectedSubtopic][index];
       dummyATL[selectedSubtopic].splice(index, 1);
       removeCriterionReferences(selectedSubtopic, deletedCriterion);
+      await deleteCriterion(deletedCriterion?.id);
       persistATLChanges();
     }
   };
@@ -298,7 +476,14 @@ export default function criteriamanagement() {
     setEditingIndex(null);
     setFormData({
       kriteria: "",
-      atl: [],
+      criteriaTopic: "",
+      atl: selectedSubskills.map((subskill) => subskill.name),
+      categoryId: selectedCategory?.id || "",
+      categoryIds: formData.categoryIds || [],
+      categoryName: selectedCategory?.name || "",
+      subskillId: selectedSubskill?.id || "",
+      subskillIds: formData.subskillIds || [],
+      subskillName: selectedSubskill?.name || "",
       levels: {
         NFI: "",
         PTE: "",
@@ -330,7 +515,7 @@ export default function criteriamanagement() {
               key={subject.id}
               onClick={() => {
                 setSelectedSubject(subject.id);
-                setSelectedSubtopic(subtopics[subject.id][0].id);
+                setSelectedSubtopic(subject.topics[0]?.id || "");
                 setShowAddForm(false);
               }}
               className={`group relative overflow-hidden rounded-2xl border-2 p-6 transition-all duration-300 ${
@@ -348,7 +533,7 @@ export default function criteriamanagement() {
                     {subject.label}
                   </h4>
                   <p className="text-sm text-text-sub-light mt-1">
-                    {subtopics[subject.id].length} Sub Topik
+                    {subject.topics.length} Sub Topik
                   </p>
                 </div>
                 {selectedSubject === subject.id && (
@@ -396,6 +581,30 @@ export default function criteriamanagement() {
             </button>
           ))}
         </div>
+        <div className="mt-4 grid gap-3 rounded-2xl border border-dashed border-stone-300 bg-white p-4 md:grid-cols-[1fr_1fr_auto]">
+          <input
+            type="text"
+            value={newSubtopicName}
+            onChange={(e) => setNewSubtopicName(e.target.value)}
+            placeholder="Tambah subtopik baru, contoh: Vocal Ensemble"
+            className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-900 outline-none focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
+          />
+          <input
+            type="text"
+            value={newSubtopicDescription}
+            onChange={(e) => setNewSubtopicDescription(e.target.value)}
+            placeholder="Deskripsi singkat"
+            className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-900 outline-none focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
+          />
+          <button
+            type="button"
+            onClick={handleAddSubtopic}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-white shadow-lg shadow-primary/20 transition-all hover:bg-primary-hover"
+          >
+            <span className="material-symbols-outlined text-lg">add</span>
+            Tambah Subtopik
+          </button>
+        </div>
       </div>
 
       {/* Criteria List Section */}
@@ -406,7 +615,7 @@ export default function criteriamanagement() {
               Daftar Kriteria ({currentCriteria.length})
             </h3>
             <p className="text-xs text-text-sub-light mt-1">
-              {subtopics[selectedSubject].find((s) => s.id === selectedSubtopic)?.label}
+              {currentSubtopics.find((s) => s.id === selectedSubtopic)?.label}
             </p>
           </div>
           <button
@@ -429,19 +638,28 @@ export default function criteriamanagement() {
               className={`rounded-xl border-2 p-4 shadow-sm hover:shadow-md transition-all duration-300 ${currentSubjectConfig?.borderColor} bg-white`}
             >
               {/* Criteria Name */}
+              {criteria.criteriaTopic && (
+                <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-stone-400">
+                  {criteria.criteriaTopic}
+                </p>
+              )}
               <h4 className={`font-bold mb-3 line-clamp-2 ${currentSubjectConfig?.textColor}`}>
                 {criteria.kriteria}
               </h4>
 
               {/* ATL Tags with Icons */}
-              <div className="flex flex-wrap gap-2 mb-4">
-                {criteria.atl.map((atl, idx) => (
+              <div className="mb-4 flex flex-wrap gap-2">
+                {getCriteriaCategoryNames(criteria).map((categoryName) => (
                   <span
-                    key={idx}
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${atlConfig[atl]?.color}`}
+                    key={categoryName}
+                    title={getCriteriaSubskillNames(criteria).join(", ")}
+                    className={`group relative inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${(atlConfig[categoryName] || fallbackAtlConfig).color}`}
                   >
-                    <span className="material-symbols-outlined text-sm">{atlConfig[atl]?.icon}</span>
-                    {atl}
+                    <span className="material-symbols-outlined text-sm">{(atlConfig[categoryName] || fallbackAtlConfig).icon}</span>
+                    {categoryName}
+                    <span className="pointer-events-none absolute left-0 top-full z-20 mt-2 hidden w-64 rounded-xl border border-stone-200 bg-white p-3 text-[11px] font-semibold leading-5 text-stone-700 shadow-xl group-hover:block">
+                      {getCriteriaSubskillNames(criteria).join(", ")}
+                    </span>
                   </span>
                 ))}
               </div>
@@ -504,6 +722,25 @@ export default function criteriamanagement() {
           </div>
 
           <div className="space-y-6">
+            {/* Criteria Topic Input */}
+            <div>
+              <label className="block text-sm font-semibold text-text-main-light mb-2">
+                Topik Kriteria ATL
+              </label>
+              <input
+                type="text"
+                value={formData.criteriaTopic}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    criteriaTopic: e.target.value,
+                  }))
+                }
+                placeholder="Contoh: Choir Performance / Vocal Technique"
+                className="w-full px-4 py-2 rounded-lg border border-stone-200/90 bg-white text-text-main-light focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+
             {/* Criteria Name Input */}
             <div>
               <label className="block text-sm font-semibold text-text-main-light mb-2">
@@ -523,33 +760,80 @@ export default function criteriamanagement() {
               />
             </div>
 
-            {/* ATL Selection */}
+            {/* ATL Category and Subskill Selection */}
             <div>
               <label className="block text-sm font-semibold text-text-main-light mb-3">
-                Pilih ATL (Approaches to Learning)
+                Pilih Kategori ATL yang Berpengaruh
               </label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {atlOptions.map((atl) => (
-                  <label
-                    key={atl}
-                    className={`flex items-center gap-3 p-3 rounded-lg border-2 bg-white cursor-pointer transition-all ${
-                      formData.atl.includes(atl)
-                        ? `${atlConfig[atl]?.color} border-current`
-                        : "border-stone-200/90 hover:border-stone-300/90"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={formData.atl.includes(atl)}
-                      onChange={() => handleATLToggle(atl)}
-                      className="w-5 h-5 cursor-pointer"
-                    />
-                    <span className="flex items-center gap-1 text-sm font-medium">
-                      <span className="material-symbols-outlined text-sm">{atlConfig[atl]?.icon}</span>
-                      {atl}
-                    </span>
-                  </label>
-                ))}
+              <div className="grid gap-3 md:grid-cols-5">
+                {atlHierarchy.map((category) => {
+                  const active = (formData.categoryIds || []).map(String).includes(String(category.id));
+                  const config = atlConfig[category.name] || fallbackAtlConfig;
+
+                  return (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => setCategorySelection(category)}
+                      className={`rounded-xl border-2 p-3 text-left transition-all ${
+                        active
+                          ? `${config.color} border-current shadow-md`
+                          : "border-stone-200/90 bg-white text-stone-700 hover:border-stone-300/90"
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-lg">{config.icon}</span>
+                      <span className="mt-1 block text-xs font-black leading-tight">{category.name}</span>
+                      <span className="mt-1 block text-[10px] font-semibold opacity-70">{category.subskills?.length || 0} subskill</span>
+                      {active && <span className="mt-2 block text-[10px] font-black">Dipilih</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-xs text-text-sub-light">
+                Bisa memilih lebih dari satu kategori. Subskill resmi dari kategori terpilih akan masuk ke kandidat pairwise.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-text-main-light mb-3">
+                Pilih Subskill yang Akan Diadu di Pairwise
+              </label>
+              <div className="grid gap-3 md:grid-cols-2">
+                {selectedCategorySubskills.map((subskill) => {
+                  const active = (formData.subskillIds || []).map(String).includes(String(subskill.id));
+                  const parentCategory = findCategoryForSubskill(subskill.id);
+                  const config = atlConfig[subskill.name] || atlConfig[parentCategory?.name] || fallbackAtlConfig;
+
+                  return (
+                    <button
+                      key={subskill.id}
+                      type="button"
+                      onClick={() => setSubskillSelection(subskill)}
+                      className={`flex items-center justify-between gap-3 rounded-xl border-2 bg-white p-3 text-left transition-all ${
+                        active
+                          ? `${config.color} border-current shadow-md`
+                          : "border-stone-200/90 text-stone-700 hover:border-stone-300/90"
+                      }`}
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="material-symbols-outlined text-lg">{config.icon}</span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-bold">{subskill.name}</span>
+                          <span className="block truncate text-[10px] font-semibold text-stone-400">{parentCategory?.name}</span>
+                        </span>
+                      </span>
+                      {active && <span className="material-symbols-outlined text-lg">check_circle</span>}
+                    </button>
+                  );
+                })}
+                {selectedCategorySubskills.length === 0 && (
+                  <div className="rounded-xl border-2 border-dashed border-stone-200 bg-white p-4 text-sm text-stone-500">
+                    Belum ada subskill untuk kategori ini.
+                  </div>
+                )}
+              </div>
+              <div className="mt-3 rounded-xl border border-primary/10 bg-primary/5 px-4 py-3 text-xs font-semibold text-primary">
+                Dipilih: {selectedCategories.map((category) => category.name).join(", ") || "-"} / {selectedSubskills.length} subskill
               </div>
             </div>
 

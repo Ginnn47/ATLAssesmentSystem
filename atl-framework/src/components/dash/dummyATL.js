@@ -1,300 +1,294 @@
+const ATL_DATA_VERSION = 4;
+
+const item = (criteriaTopic, kriteria, atlCategories, atl, levels) => ({
+  criteriaTopic,
+  kriteria,
+  atlCategories,
+  category: atlCategories.join(", "),
+  atl,
+  levels,
+});
+
 const baseATL = {
-  // ========== SINGING ==========
-  "singing_christmas_carol": [
-    {
-      kriteria: "Role Play & Character Expression",
-      atl: ["Thinking"],
-      levels: {
-        NFI: "Fails to participate in role-play or show expression",
-        PTE: "Limited expression; rarely reflects character",
-        DE: "Tries to convey character; sometimes inconsistent",
-        ME: "Performs role effectively; expresses emotion",
-        EE: "Sang with full emotion; convincingly portrays character"
-      }
-    },
-    {
-      kriteria: "Role Play & Character Expression",
-      atl: ["Communication"],
-      levels: {
-        NFI: "Fails to communicate character",
-        PTE: "Rarely communicates role",
-        DE: "Communicates partially",
-        ME: "Communicates effectively",
-        EE: "Communicates role clearly and expressively"
-      }
-    },
-    {
-      kriteria: "Rhythm & Tempo Accuracy",
-      atl: ["Thinking"],
-      levels: {
-        NFI: "Cannot follow rhythm at all",
-        PTE: "Frequently struggles with timing",
-        DE: "Sometimes off-beat",
-        ME: "Mostly accurate; minor mistakes",
-        EE: "Perfect timing; adjusts to group seamlessly"
-      }
-    },
-    {
-      kriteria: "Team Coordination / Ensemble Work",
-      atl: ["Social"],
-      levels: {
-        NFI: "Disrupts or fails to coordinate",
-        PTE: "Struggles to stay coordinated",
-        DE: "Some coordination issues; needs reminders",
-        ME: "Works well with group; minimal guidance",
-        EE: "Balances and blends voice perfectly; leads group when appropriate"
-      }
-    },
-    {
-      kriteria: "Team Coordination / Ensemble Work",
-      atl: ["Self-Management"],
-      levels: {
-        NFI: "Does not manage participation",
-        PTE: "Needs constant reminders",
-        DE: "Sometimes self-manages",
-        ME: "Mostly self-manages with guidance",
-        EE: "Independently manages own part; proactive"
-      }
-    },
-    {
-      kriteria: "Focus & Attention",
-      atl: ["Self-Management"],
-      levels: {
-        NFI: "Never pays attention",
-        PTE: "Frequently distracted",
-        DE: "Sometimes attentive",
-        ME: "Generally attentive; minor lapses",
-        EE: "Consistently attentive; follows instructions without prompting"
-      }
-    },
-    {
-      kriteria: "Creativity / Interpretation",
-      atl: ["Thinking"],
-      levels: {
-        NFI: "No creative contribution",
-        PTE: "Rarely creative; minimal effect",
-        DE: "Attempts creativity; limited impact",
-        ME: "Adds some creativity; appropriate",
-        EE: "Adds creative interpretation enhancing overall performance"
-      }
-    }
+  __version: ATL_DATA_VERSION,
+
+  singing_christmas_carol: [
+    item("Creating", "Role Play & Musical Contribution", ["Thinking Skills", "Communication Skills"], [
+      "Interpersonal relationships",
+      "Exchanging-information",
+      "Organization skills",
+      "Reflection / Metacognitive",
+    ], {
+      NFI: "Fails to participate in the assigned part.",
+      PTE: "Significantly struggles with assigned role; negatively impacts the group.",
+      DE: "Tries to fulfill role; struggles with technical requirements.",
+      ME: "Executes assigned role effectively; contributes reliably to the music.",
+      EE: "Skillfully executes role; demonstrates high technical command.",
+    }),
+    item("Creating", "Rhythm & Tempo Accuracy", ["Thinking Skills", "Self-Management Skills"], [
+      "State of Mind",
+      "InformationTransfer",
+      "Reflection / Metacognitive",
+      "Critical Thingking",
+    ], {
+      NFI: "Cannot follow the rhythm or tempo.",
+      PTE: "Difficulty maintaining tempo.",
+      DE: "Often out of sync with the music's tempo.",
+      ME: "Performs with mostly accurate rhythm.",
+      EE: "Performs with highly accurate rhythm.",
+    }),
+    item("Creating", "Ensemble Balance & Dynamics", ["Social Skills", "Communication Skills"], [
+      "Interpersonal relationships",
+      "Social-emotional intelligence",
+      "Exchanging-information",
+    ], {
+      NFI: "No awareness of group sound or control.",
+      PTE: "Difficulty controlling volume.",
+      DE: "Volume is sometimes unbalanced.",
+      ME: "Good ensemble balance.",
+      EE: "Excellent ensemble balance.",
+    }),
+    item("Responding", "Focus & Attention", ["Self-Management Skills", "Thinking Skills"], [
+      "State of Mind",
+      "Reflection / Metacognitive",
+      "Organization skills",
+    ], {
+      NFI: "Does not show attention to the lesson at all.",
+      PTE: "Is often unfocused and distracts others.",
+      DE: "Is sometimes attentive, but is often distracted by others.",
+      ME: "Pays attention to teacher and peer instructions well.",
+      EE: "Always pays attention to teacher and peer instructions.",
+    }),
+    item("Responding", "Participation & Effort", ["Social Skills", "Self-Management Skills"], [
+      "State of Mind",
+      "Interpersonal relationships",
+      "Reflection / Metacognitive",
+    ], {
+      NFI: "Is completely unwilling to participate in music activities in class.",
+      PTE: "Often refuses to participate in singing or practice activities.",
+      DE: "Participates when asked or encouraged by the teacher.",
+      ME: "Actively participates in most activities.",
+      EE: "Very enthusiastic and always actively participates in all music activities.",
+    }),
+    item("Responding", "Responsibility & Respect", ["Social Skills", "Self-Management Skills"], [
+      "Social-emotional intelligence",
+      "Interpersonal relationships",
+      "Organization skills",
+    ], {
+      NFI: "Shows a lack of concern for classroom rules, peers, and the teacher.",
+      PTE: "Needs repeated reminders to be respectful.",
+      DE: "Sometimes forgets classroom rules.",
+      ME: "Shows respect for the teacher and peers.",
+      EE: "Listens respectfully when others are performing or the teacher is speaking.",
+    }),
   ],
-  "singing_choir": [
-    {
-      kriteria: "Harmonization Accuracy",
-      atl: ["Thinking"],
-      levels: {
-        NFI: "Cannot blend",
-        PTE: "Frequently off-pitch",
-        DE: "Shows developing control, though occasional pitch issues still appear during more difficult transitions",
-        ME: "Blends well; minor pitch errors",
-        EE: "Flawlessly blends with group; maintains perfect pitch"
-      }
-    },
-    {
-      kriteria: "Harmonization Accuracy",
-      atl: ["Research"],
-      levels: {
-        NFI: "Cannot adjust to group",
-        PTE: "Struggles to adapt",
-        DE: "Adjusts partially",
-        ME: "Adjusts appropriately",
-        EE: "Adjusts proactively; improves overall harmony"
-      }
-    },
-    {
-      kriteria: "Performance Expression",
-      atl: ["Communication"],
-      levels: {
-        NFI: "No expressive attempt",
-        PTE: "Limited expression",
-        DE: "Attempts expression; inconsistent",
-        ME: "Expresses music clearly",
-        EE: "Expresses music with emotion and style; enhances performance"
-      }
-    },
-    {
-      kriteria: "Team Collaboration",
-      atl: ["Social"],
-      levels: {
-        NFI: "No participation",
-        PTE: "Rarely participates",
-        DE: "Contributes occasionally",
-        ME: "Participates actively",
-        EE: "Actively leads group; communicates ideas clearly"
-      }
-    }
+
+  singing_choir: [
+    item("Choir Performance", "Harmonization Accuracy", ["Thinking Skills", "Research Skills"], [
+      "Critical Thingking",
+      "Media Literacy",
+      "Textual Literacy",
+    ], {
+      NFI: "Cannot identify when harmony is out of tune or disconnected from the group.",
+      PTE: "Frequently loses pitch and needs repeated support to rejoin the harmony.",
+      DE: "Maintains some harmony, but pitch and blend shift during difficult transitions.",
+      ME: "Blends with the group and keeps harmony stable with minor pitch issues.",
+      EE: "Maintains accurate harmony, adjusts independently, and strengthens the group sound.",
+    }),
+    item("Choir Performance", "Performance Expression", ["Communication Skills", "Thinking Skills"], [
+      "Exchanging-information",
+      "Literacy skills",
+      "Creative Thingking",
+    ], {
+      NFI: "Sings without clear expression, phrasing, or attention to musical meaning.",
+      PTE: "Shows limited expression and rarely connects expression to the song text.",
+      DE: "Attempts expression, but phrasing and emotion are inconsistent.",
+      ME: "Communicates the song clearly with appropriate expression and phrasing.",
+      EE: "Uses expressive phrasing, diction, and emotion to enhance the choir performance.",
+    }),
+    item("Choir Performance", "Team Collaboration", ["Social Skills", "Self-Management Skills"], [
+      "Interpersonal relationships",
+      "Social-emotional intelligence",
+      "Organization skills",
+    ], {
+      NFI: "Does not cooperate with the ensemble and disrupts rehearsal flow.",
+      PTE: "Participates inconsistently and needs reminders to listen to the group.",
+      DE: "Works with peers when prompted, but group awareness is uneven.",
+      ME: "Collaborates reliably and responds to group cues during rehearsal.",
+      EE: "Supports peers, listens actively, and helps the ensemble stay coordinated.",
+    }),
   ],
-  // ---------- IPA ----------
-  "ipa_energi_perubahan": [
-    {
-      kriteria: "Experiment Setup & Safety",
-      atl: ["Self-Management"],
-      levels: {
-        NFI: "Cannot set up safely",
-        PTE: "Often needs supervision",
-        DE: "Needs some guidance",
-        ME: "Correctly sets up with minor support",
-        EE: "Independently sets up experiment; follows all safety rules"
-      }
-    },
-    {
-      kriteria: "Data Collection – Thinking about Idea",
-      atl: ["Thinking"],
-      levels: {
-        NFI: "Cannot identify patterns",
-        PTE: "Rarely identifies relationships",
-        DE: "Partially identifies patterns",
-        ME: "Mostly identifies patterns",
-        EE: "Accurately identifies patterns and draws insightful conclusions"
-      }
-    },
-    {
-      kriteria: "Data Collection – Research Process",
-      atl: ["Research"],
-      levels: {
-        NFI: "Does not collect usable data",
-        PTE: "Frequent errors; incomplete",
-        DE: "Partial data collected",
-        ME: "Mostly accurate data",
-        EE: "Independently collects complete, accurate data"
-      }
-    },
-    {
-      kriteria: "Observation Skills",
-      atl: ["Thinking"],
-      levels: {
-        NFI: "Cannot observe or report",
-        PTE: "Limited observation; many missed details",
-        DE: "Observes partially",
-        ME: "Observes and records well",
-        EE: "Notices subtle changes; draws insightful conclusions"
-      }
-    },
-    {
-      kriteria: "Collaboration & Communication",
-      atl: ["Social", "Communication"],
-      levels: {
-        NFI: "No participation or communication",
-        PTE: "Rarely participates; limited communication",
-        DE: "Contributes occasionally",
-        ME: "Participates actively; communicates effectively",
-        EE: "Actively leads group; communicates scientific ideas clearly"
-      }
-    },
-    {
-      kriteria: "Problem-Solving / Critical Thinking",
-      atl: ["Thinking"],
-      levels: {
-        NFI: "Cannot solve problems",
-        PTE: "Rarely attempts solution",
-        DE: "Attempts partially",
-        ME: "Solves most problems",
-        EE: "Solves all problems; proposes improvements"
-      }
-    }
+
+  singing_vocal_technique: [
+    item("Vocal Technique", "Breath Control", ["Self-Management Skills", "Thinking Skills"], [
+      "State of Mind",
+      "Reflection / Metacognitive",
+    ], {
+      NFI: "Runs out of breath quickly and cannot complete short vocal phrases.",
+      PTE: "Needs frequent reminders to breathe before phrases and support the tone.",
+      DE: "Uses breath support sometimes, but control drops in longer phrases.",
+      ME: "Maintains steady breath support through most assigned vocal phrases.",
+      EE: "Uses controlled breathing to sing long phrases smoothly and confidently.",
+    }),
+    item("Vocal Technique", "Pitch Accuracy", ["Thinking Skills", "Research Skills"], [
+      "Critical Thingking",
+      "Textual Literacy",
+    ], {
+      NFI: "Cannot match the target pitch even with teacher modeling.",
+      PTE: "Matches pitch only occasionally and often drifts from the melody.",
+      DE: "Sings several notes correctly, but pitch accuracy is inconsistent.",
+      ME: "Keeps pitch mostly accurate across the assigned melody.",
+      EE: "Sings with accurate pitch and self-corrects quickly when needed.",
+    }),
   ],
-  "ipa_tata_surya": [
-    {
-      kriteria: "Planet Identification & Characteristics",
-      atl: ["Research"],
-      levels: {
-        NFI: "Cannot identify any planets or their characteristics",
-        PTE: "Identifies only a few planets with frequent errors",
-        DE: "Identifies most planets; some confusion on characteristics",
-        ME: "Accurately identifies all planets and main characteristics",
-        EE: "Detailed identification of planets, moons, and specific phenomena"
-      }
-    },
-    {
-      kriteria: "Scale Modeling Accuracy",
-      atl: ["Thinking"],
-      levels: {
-        NFI: "No attempt to represent correct scale",
-        PTE: "Significant errors in relative sizes or distances",
-        DE: "Some attempt at scale; several inconsistencies",
-        ME: "Mostly accurate relative scale used",
-        EE: "Precise calculations and representation of scale and distance"
-      }
-    },
-    {
-      kriteria: "Collaborative Inquiry",
-      atl: ["Social"],
-      levels: {
-        NFI: "Does not participate in group research",
-        PTE: "Limited contribution; relies heavily on others",
-        DE: "Contributes occasionally; needs prompting",
-        ME: "Active contributor to group goals",
-        EE: "Facilitates group work; helps resolve conflicts and share tasks"
-      }
-    },
-    {
-      kriteria: "Scientific Communication",
-      atl: ["Communication"],
-      levels: {
-        NFI: "Cannot explain concepts clearly",
-        PTE: "Uses limited scientific vocabulary; unclear explanations",
-        DE: "Uses basic scientific terms; meaning is mostly clear",
-        ME: "Uses correct scientific vocabulary effectively",
-        EE: "Highly articulate; uses sophisticated scientific language to explain complex ideas"
-      }
-    },
-    {
-      kriteria: "Task Planning & Execution",
-      atl: ["Self-Management"],
-      levels: {
-        NFI: "Fails to meet deadlines or plan steps",
-        PTE: "Meets deadlines late; disorganized process",
-        DE: "Meets most deadlines; partial planning",
-        ME: "Organized approach; meets all major deadlines",
-        EE: "Highly organized; creates and follows a detailed project timeline independently"
-      }
-    }
+
+  ipa_energi_perubahan: [
+    item("Energy Investigation", "Experiment Setup & Safety", ["Self-Management Skills", "Research Skills"], [
+      "Organization skills",
+      "Ethical use of information",
+    ], {
+      NFI: "Cannot prepare materials safely or follow basic experiment rules.",
+      PTE: "Needs repeated reminders to use tools and materials safely.",
+      DE: "Sets up parts of the experiment with some safety reminders.",
+      ME: "Sets up the experiment correctly and follows safety expectations.",
+      EE: "Prepares materials independently and models safe procedures for peers.",
+    }),
+    item("Energy Investigation", "Data Collection & Observation", ["Research Skills", "Thinking Skills"], [
+      "Textual Literacy",
+      "Critical Thingking",
+      "InformationTransfer",
+    ], {
+      NFI: "Does not record useful observations or measurable data.",
+      PTE: "Records incomplete data with frequent errors or missing details.",
+      DE: "Collects some relevant data, but observations need more precision.",
+      ME: "Collects mostly accurate data and records clear observations.",
+      EE: "Collects complete data and notices patterns or changes independently.",
+    }),
+    item("Energy Investigation", "Collaboration & Communication", ["Social Skills", "Communication Skills"], [
+      "Interpersonal relationships",
+      "Exchanging-information",
+      "ICT skills",
+    ], {
+      NFI: "Does not contribute to the group investigation or discussion.",
+      PTE: "Shares little information and relies heavily on peers.",
+      DE: "Contributes when prompted, but explanations are still unclear.",
+      ME: "Participates actively and communicates observations clearly.",
+      EE: "Helps organize group discussion and explains scientific ideas clearly.",
+    }),
+    item("Energy Investigation", "Problem-Solving / Critical Thinking", ["Thinking Skills"], [
+      "Critical Thingking",
+      "InformationTransfer",
+    ], {
+      NFI: "Cannot suggest a solution when the investigation does not work.",
+      PTE: "Tries simple fixes but does not connect them to evidence.",
+      DE: "Suggests partial solutions using some evidence from the experiment.",
+      ME: "Uses evidence to solve most problems during the investigation.",
+      EE: "Analyzes problems carefully and proposes improvements based on evidence.",
+    }),
   ],
-  // ---------- Singing: Vocal Technique ----------
-  "singing_vocal_technique": [],
-  
-  // ---------- Singing: Music Theory Basics ----------
-  "singing_music_theory_basics": [],
-  
-  // ---------- Singing: Performance Practice ----------
-  "singing_performance_practice": [],
-  
-  // ---------- IPA: Sistem Tubuh ----------
-  "ipa_sistem_tubuh": [],
-  
-  // ---------- IPA: Ekosistem ----------
-  "ipa_ekosistem": [],
-  
-  // ========== MATHEMATICS ==========
-  // ---------- Math: Linear Equations ----------
-  "math_linear_equations": [],
-  
-  // ---------- Math: Quadratic Functions ----------
-  "math_quadratic_functions": [],
-  
-  // ---------- Math: Geometry ----------
-  "math_geometry": [],
-  
-  // ---------- Math: Trigonometry ----------
-  "math_trigonometry": [],
-  
-  // ---------- Math: Statistics ----------
-  "math_statistics": []
+
+  ipa_tata_surya: [
+    item("Solar System Inquiry", "Planet Identification & Characteristics", ["Research Skills"], [
+      "Textual Literacy",
+      "Media Literacy",
+    ], {
+      NFI: "Cannot identify planets or describe their main characteristics.",
+      PTE: "Identifies a few planets but gives unclear or inaccurate details.",
+      DE: "Identifies most planets with some confusion about characteristics.",
+      ME: "Accurately identifies planets and explains main characteristics.",
+      EE: "Gives detailed planet descriptions using accurate research information.",
+    }),
+    item("Solar System Inquiry", "Scale Modeling Accuracy", ["Thinking Skills", "Self-Management Skills"], [
+      "Critical Thingking",
+      "InformationTransfer",
+      "Organization skills",
+    ], {
+      NFI: "Does not attempt to represent relative size or distance.",
+      PTE: "Uses a model with major errors in size or distance.",
+      DE: "Shows some sense of scale, but several parts are inconsistent.",
+      ME: "Builds a mostly accurate model using appropriate relative scale.",
+      EE: "Creates a precise model and explains scale decisions clearly.",
+    }),
+    item("Solar System Inquiry", "Collaborative Inquiry", ["Social Skills", "Communication Skills"], [
+      "Interpersonal relationships",
+      "Social-emotional intelligence",
+      "Exchanging-information",
+    ], {
+      NFI: "Does not participate in group research or model creation.",
+      PTE: "Contributes minimally and waits for others to complete tasks.",
+      DE: "Contributes occasionally but needs prompting to stay involved.",
+      ME: "Works actively with peers and shares responsibilities fairly.",
+      EE: "Facilitates group work and helps peers resolve task challenges.",
+    }),
+  ],
+
+  ipa_sistem_tubuh: [
+    item("Body System Inquiry", "Concept Explanation", ["Communication Skills", "Research Skills"], [
+      "Literacy skills",
+      "Textual Literacy",
+    ], {
+      NFI: "Cannot explain the body system or use relevant vocabulary.",
+      PTE: "Gives very limited explanations with frequent concept errors.",
+      DE: "Explains basic ideas but misses important relationships.",
+      ME: "Explains the body system clearly using appropriate vocabulary.",
+      EE: "Explains relationships within the body system with detail and clarity.",
+    }),
+  ],
+
+  math_linear_equations: [
+    item("Linear Equations", "Problem Translation", ["Thinking Skills", "Communication Skills"], [
+      "InformationTransfer",
+      "Literacy skills",
+    ], {
+      NFI: "Cannot translate a word problem into a mathematical expression.",
+      PTE: "Identifies some numbers but forms an incorrect equation.",
+      DE: "Creates a partial equation with some missing relationships.",
+      ME: "Translates most word problems into correct linear equations.",
+      EE: "Translates problems accurately and explains the equation structure.",
+    }),
+  ],
+
+  math_geometry: [
+    item("Geometry", "Shape Reasoning", ["Thinking Skills"], [
+      "Critical Thingking",
+      "Creative Thingking",
+    ], {
+      NFI: "Cannot identify shape properties or justify geometric choices.",
+      PTE: "Recognizes simple shapes but gives weak reasoning.",
+      DE: "Uses some properties to reason about shapes with support.",
+      ME: "Explains shape properties and solves most geometry tasks correctly.",
+      EE: "Applies shape properties flexibly and justifies solutions clearly.",
+    }),
+  ],
+
+  math_statistics: [
+    item("Statistics", "Data Interpretation", ["Research Skills", "Thinking Skills"], [
+      "Textual Literacy",
+      "Critical Thingking",
+      "InformationTransfer",
+    ], {
+      NFI: "Cannot read the data display or identify basic information.",
+      PTE: "Reads simple values but draws inaccurate conclusions.",
+      DE: "Interprets some data correctly with teacher support.",
+      ME: "Interprets data displays and explains reasonable conclusions.",
+      EE: "Compares data patterns and explains conclusions with strong evidence.",
+    }),
+  ],
 };
 
-// Inisialisasi storage untuk bobot jika belum ada
 if (!baseATL.savedWeights) baseATL.savedWeights = {};
 if (!baseATL.savedAssessments) baseATL.savedAssessments = {};
 
-// Logika untuk persistensi data di browser (Demo Only)
 const getPersistentData = () => {
   const saved = localStorage.getItem("atl_framework_data");
-  return saved ? JSON.parse(saved) : baseATL;
+  if (!saved) return baseATL;
+
+  const parsed = JSON.parse(saved);
+  return parsed.__version === ATL_DATA_VERSION ? parsed : baseATL;
 };
 
 export const dummyATL = getPersistentData();
 export const saveATLData = (data) => {
-  localStorage.setItem("atl_framework_data", JSON.stringify(data));
+  localStorage.setItem("atl_framework_data", JSON.stringify({ ...data, __version: ATL_DATA_VERSION }));
   window.dispatchEvent(new Event("atl-data-updated"));
 };

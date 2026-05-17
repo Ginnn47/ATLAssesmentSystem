@@ -16,7 +16,25 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
+from . import views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/students/', views.students_api),
+    path('api/atl/hierarchy/', views.atl_hierarchy_api),
+    path('api/contexts/', views.contexts_api),
+    path('api/contexts/<str:context_id>/flow/', views.context_flow_api),
+    path('api/contexts/<str:context_id>/subskills/', views.context_subskills_api),
+    path('api/contexts/<str:context_id>/rubric-items/', views.context_rubric_items_api),
+    path('api/contexts/<str:context_id>/pairwise/', views.context_pairwise_api),
+    path('api/contexts/<str:context_id>/weights/calculate/', views.context_weights_calculate_api),
+    path('api/contexts/<str:context_id>/weights/', views.context_weights_api),
+    path('api/rubric-scales/', views.rubric_scales_api),
+    path('api/topics/', views.topics_api),
+    path('api/topics/<str:topic_id>/criteria/', views.topic_criteria_api),
+    path('api/criteria/<int:criterion_id>/', views.criterion_detail_api),
+    path('api/fuzzy-ahp/calculate/', views.fuzzy_calculate_api),
+    path('api/topics/<str:topic_id>/weights/', views.topic_weights_api),
+    path('api/assessments/', views.assessments_api),
+    path('api/reports/', views.reports_api),
 ]

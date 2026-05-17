@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import Sidebar from "./sidebar";
 import { allStudentsData } from "./dummyStudents";
 import { dummyATL, saveATLData } from "./dummyATL";
+import { getStudents, hydrateTopic, saveAssessment } from "../../services/atlApi";
+import { getSubjectTopicMapByLabel } from "../../services/topicCatalog";
 
 const ratingOptions = [
   { label: "Need Further Improvement", code: "NFI" },
@@ -11,29 +13,6 @@ const ratingOptions = [
   { label: "Meeting Expectation", code: "ME" },
   { label: "Exceeding Expectation", code: "EE" },
 ];
-
-const subjectTopicMap = {
-  Singing: [
-    { id: "singing_christmas_carol", label: "Christmas Carol" },
-    { id: "singing_choir", label: "Choir" },
-    { id: "singing_vocal_technique", label: "Vocal Technique" },
-    { id: "singing_music_theory_basics", label: "Music Theory Basics" },
-    { id: "singing_performance_practice", label: "Performance Practice" },
-  ],
-  IPA: [
-    { id: "ipa_energi_perubahan", label: "Energi Perubahan" },
-    { id: "ipa_tata_surya", label: "Tata Surya" },
-    { id: "ipa_sistem_tubuh", label: "Sistem Tubuh" },
-    { id: "ipa_ekosistem", label: "Ekosistem" },
-  ],
-  Math: [
-    { id: "math_linear_equations", label: "Linear Equations" },
-    { id: "math_quadratic_functions", label: "Quadratic Functions" },
-    { id: "math_geometry", label: "Geometry" },
-    { id: "math_trigonometry", label: "Trigonometry" },
-    { id: "math_statistics", label: "Statistics" },
-  ],
-};
 
 const levelStyleMap = {
   NFI: {
@@ -81,23 +60,32 @@ const levelStyleMap = {
 };
 
 const atlConfig = {
-  Thinking: { icon: "psychology", color: "bg-blue-100 text-blue-700" },
-  Communication: { icon: "chat", color: "bg-purple-100 text-purple-700" },
-  Social: { icon: "group", color: "bg-green-100 text-green-700" },
-  "Self-Management": { icon: "self_improvement", color: "bg-orange-100 text-orange-700" },
-  Research: { icon: "explore", color: "bg-red-100 text-red-700" },
+  "Thinking Skills": { icon: "psychology", color: "border-sky-200 bg-sky-50 text-sky-700" },
+  "Research Skills": { icon: "explore", color: "border-violet-200 bg-violet-50 text-violet-700" },
+  "Communication Skills": { icon: "chat", color: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700" },
+  "Social Skills": { icon: "group", color: "border-lime-200 bg-lime-50 text-lime-700" },
+  "Self-Management Skills": { icon: "self_improvement", color: "border-rose-200 bg-rose-50 text-rose-700" },
 };
 
 const normalizeRatingLabel = (label) =>
   label === "Need Improvement" ? "Need Further Improvement" : label;
 
 const ratingValueMap = {
-  "Exceeding Expectation": 100,
-  "Meeting Expectation": 80,
-  "Developing Expectation": 60,
-  "Progressing Toward Expectation": 40,
-  "Need Further Improvement": 20,
-  "Need Improvement": 20,
+  "Exceeding Expectation": 0.9,
+  "Meeting Expectation": 0.7,
+  "Developing Expectation": 0.5,
+  "Progressing Toward Expectation": 0.3,
+  "Need Further Improvement": 0.1,
+  "Need Improvement": 0.1,
+};
+
+const getScoreCategory = (score) => {
+  const value = Number(score || 0);
+  if (value >= 85) return { label: "Excellent", className: "bg-emerald-100 text-emerald-700" };
+  if (value >= 70) return { label: "Good", className: "bg-blue-100 text-blue-700" };
+  if (value >= 50) return { label: "Average", className: "bg-amber-100 text-amber-700" };
+  if (value >= 30) return { label: "Low", className: "bg-orange-100 text-orange-700" };
+  return { label: "Critical", className: "bg-red-100 text-red-700" };
 };
 
 export default function BatchInputATL() {
@@ -109,14 +97,21 @@ export default function BatchInputATL() {
   const [selectedTopicIndex, setSelectedTopicIndex] = useState(0);
   const [batchRatingsByStudent, setBatchRatingsByStudent] = useState({});
   const [matrixContext, setMatrixContext] = useState(null);
+  const [showDetailPanel, setShowDetailPanel] = useState(true);
   const [dataVersion, setDataVersion] = useState(0);
+  const [apiStudents, setApiStudents] = useState(allStudentsData[selectedClass] || []);
+  const [subjectTopicMap, setSubjectTopicMap] = useState(getSubjectTopicMapByLabel);
+  const [filtersHydrated, setFiltersHydrated] = useState(false);
   const skipNextSubjectResetRef = React.useRef(false);
 
-  const topicOptions = useMemo(() => subjectTopicMap[selectedSubject] || [], [selectedSubject]);
+  const topicOptions = useMemo(() => subjectTopicMap[selectedSubject] || [], [selectedSubject, subjectTopicMap]);
   const selectedTopic = topicOptions[selectedTopicIndex] || { id: "", label: "Pilih Topik" };
   const dataKey = selectedTopic.id;
 
-  const students = useMemo(() => allStudentsData[selectedClass] || [], [selectedClass]);
+  const students = useMemo(
+    () => (apiStudents.length > 0 ? apiStudents : allStudentsData[selectedClass] || []),
+    [apiStudents, selectedClass]
+  );
   const currentATLData = dummyATL[dataKey] || [];
 
   const columns = useMemo(
@@ -124,6 +119,7 @@ export default function BatchInputATL() {
       currentATLData.map((item, idx) => ({
         id: `metric-${idx}`,
         title: item.kriteria,
+        categories: item.atlCategories || (item.category ? item.category.split(",").map((name) => name.trim()).filter(Boolean) : []),
         atlNames: item.atl || [],
         levels: item.levels || {},
         metricKeys: (item.atl || []).map((atlName) => `${dataKey}_${item.kriteria}_${atlName}`),
@@ -139,21 +135,48 @@ export default function BatchInputATL() {
       Object.assign(dummyATL, JSON.parse(savedData));
       setDataVersion((version) => version + 1);
     };
+    const syncTopics = () => setSubjectTopicMap(getSubjectTopicMapByLabel());
 
     window.addEventListener("focus", syncDataFromStorage);
     window.addEventListener("storage", syncDataFromStorage);
     window.addEventListener("atl-data-updated", syncDataFromStorage);
+    window.addEventListener("atl-topics-updated", syncTopics);
 
     return () => {
       window.removeEventListener("focus", syncDataFromStorage);
       window.removeEventListener("storage", syncDataFromStorage);
       window.removeEventListener("atl-data-updated", syncDataFromStorage);
+      window.removeEventListener("atl-topics-updated", syncTopics);
     };
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    getStudents(selectedClass).then((studentsFromApi) => {
+      if (!cancelled) setApiStudents(studentsFromApi);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClass]);
+
+  useEffect(() => {
+    if (!dataKey) return undefined;
+    let cancelled = false;
+    hydrateTopic(dataKey).then(() => {
+      if (!cancelled) setDataVersion((version) => version + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataKey]);
+
+  useEffect(() => {
     const saved = localStorage.getItem("batch_filter_pref");
-    if (!saved) return;
+    if (!saved) {
+      setFiltersHydrated(true);
+      return;
+    }
 
     const { cls, subj, topicIdx } = JSON.parse(saved);
     if (cls) setSelectedClass(cls);
@@ -162,6 +185,7 @@ export default function BatchInputATL() {
       setSelectedSubject(subj);
     }
     if (Number.isInteger(topicIdx)) setSelectedTopicIndex(topicIdx);
+    setFiltersHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -172,6 +196,19 @@ export default function BatchInputATL() {
 
     setSelectedTopicIndex(0);
   }, [selectedSubject]);
+
+  useEffect(() => {
+    if (!filtersHydrated) return;
+    if (!selectedClass || !selectedSubject) return;
+    localStorage.setItem(
+      "batch_filter_pref",
+      JSON.stringify({
+        cls: selectedClass,
+        subj: selectedSubject,
+        topicIdx: selectedTopicIndex,
+      })
+    );
+  }, [filtersHydrated, selectedClass, selectedSubject, selectedTopicIndex]);
 
   useEffect(() => {
     if (!dataKey || students.length === 0) {
@@ -234,20 +271,21 @@ export default function BatchInputATL() {
         if (!ratingValue) return;
 
         column.atlNames.forEach((atlName) => {
-          const weightKey = `${column.title} (${atlName})`;
-          const weight = parseFloat(weights[weightKey]) || 0;
+          const legacyWeightKey = `${column.title} (${atlName})`;
+          const packageWeight = Object.values(weights.packages || {}).find((pkg) => pkg.title === column.title)?.weights?.[atlName];
+          const weight = parseFloat(packageWeight ?? weights[legacyWeightKey] ?? weights[atlName]) || 0;
           if (weight > 0) {
             totalWeightedScore += ratingValue * weight;
             totalWeight += weight;
           }
-          fallbackScore += ratingValue;
+          fallbackScore += ratingValue * 100;
           fallbackCount += 1;
         });
       });
 
       const score =
         totalWeight > 0
-          ? totalWeightedScore / totalWeight
+          ? (totalWeightedScore / totalWeight) * 100
           : fallbackCount > 0
             ? fallbackScore / fallbackCount
             : null;
@@ -258,13 +296,29 @@ export default function BatchInputATL() {
   }, [students, columns, batchRatingsByStudent, dataKey]);
 
   const handleCellChange = (studentId, columnId, value) => {
-    setBatchRatingsByStudent((prev) => ({
-      ...prev,
-      [studentId]: {
+    setBatchRatingsByStudent((prev) => {
+      const nextStudentRow = {
         ...(prev[studentId] || {}),
         [columnId]: value,
-      },
-    }));
+      };
+      const next = {
+        ...prev,
+        [studentId]: nextStudentRow,
+      };
+      const column = columns.find((item) => item.id === columnId);
+      if (column && dataKey) {
+        if (!dummyATL.savedAssessments) dummyATL.savedAssessments = {};
+        if (!dummyATL.savedAssessments[studentId]) dummyATL.savedAssessments[studentId] = {};
+        const topicRatings = { ...(dummyATL.savedAssessments[studentId][dataKey] || {}) };
+        column.metricKeys.forEach((metricKey) => {
+          if (value) topicRatings[metricKey] = value;
+          else delete topicRatings[metricKey];
+        });
+        dummyATL.savedAssessments[studentId][dataKey] = topicRatings;
+        saveATLData(dummyATL);
+      }
+      return next;
+    });
   };
 
   const openMatrix = (student, column) => {
@@ -283,10 +337,11 @@ export default function BatchInputATL() {
     setBatchRatingsByStudent(cleared);
   };
 
-  const persistBatchAssessment = () => {
+  const persistBatchAssessment = async () => {
     if (!dataKey || columns.length === 0 || students.length === 0) return false;
 
     if (!dummyATL.savedAssessments) dummyATL.savedAssessments = {};
+    const apiWrites = [];
 
     students.forEach((student) => {
       if (!dummyATL.savedAssessments[student.id]) dummyATL.savedAssessments[student.id] = {};
@@ -303,43 +358,65 @@ export default function BatchInputATL() {
       });
 
       dummyATL.savedAssessments[student.id][dataKey] = topicRatings;
+      apiWrites.push(saveAssessment(student.id, dataKey, topicRatings));
     });
 
     saveATLData(dummyATL);
+    await Promise.all(apiWrites);
     return true;
   };
 
-  const handleSaveDraft = () => {
-    if (!persistBatchAssessment()) return;
+  const handleSaveDraft = async () => {
+    if (!(await persistBatchAssessment())) return;
     alert(`Draft batch ${students.length} siswa berhasil disimpan.`);
   };
 
-  const handleSend = () => {
-    if (!persistBatchAssessment()) return;
+  const handleSend = async () => {
+    if (!(await persistBatchAssessment())) return;
     alert(`Penilaian batch ${students.length} siswa berhasil dikirim.`);
   };
 
-  return (
-    <div className="flex h-screen w-full overflow-hidden">
-      <Sidebar user={currentUser} />
+  const detailContext = matrixContext || (students[0] && columns[0] ? { student: students[0], column: columns[0] } : null);
+  const detailValue = detailContext ? batchRatingsByStudent[detailContext.student.id]?.[detailContext.column.id] || "" : "";
+  const detailOption = ratingOptions.find((item) => item.label === detailValue);
+  const detailTone = levelStyleMap[detailOption?.code || "NONE"];
+  const detailStudentScore = detailContext ? batchStudentScores[detailContext.student.id] : null;
+  const detailStudentCategory = getScoreCategory(detailStudentScore);
+  const detailWeight = detailContext
+    ? (() => {
+        const weights = dummyATL.savedWeights?.[dataKey] || {};
+        const packageWeight = Object.values(weights.packages || {}).find((pkg) => pkg.title === detailContext.column.title)?.weights || {};
+        const values = detailContext.column.atlNames
+          .map((atlName) => Number(packageWeight[atlName] ?? weights[`${detailContext.column.title} (${atlName})`] ?? weights[atlName] ?? 0))
+          .filter((weight) => weight > 0);
+        return values.length > 0 ? values.reduce((sum, weight) => sum + weight, 0) / values.length : 0;
+      })()
+    : 0;
 
-      <main className="relative flex flex-1 flex-col overflow-hidden bg-stone-50">
+  return (
+    <div className="flex h-screen w-full overflow-hidden bg-stone-50">
+      <Sidebar user={currentUser} />
+      <main className="relative flex h-full flex-1 flex-col overflow-hidden bg-stone-50">
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
           <div className="mx-auto flex max-w-[1500px] flex-col gap-8">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-col gap-4 rounded-[1.75rem] border border-stone-200 bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.06)] xl:flex-row xl:items-center xl:justify-between">
               <div className="max-w-2xl">
-                <span className="rounded bg-primary/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-stone-900">
-                  Main Page / Student Management / ATL Input
+                <span className="rounded bg-primary/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-primary-hover">
+                  Assessment / ATL Input
                 </span>
-                <h1 className="mt-3 text-3xl font-black text-text-main-light lg:text-4xl">ATL Batch Input</h1>
-                <p className="mt-3 text-sm text-text-sub-light">
-                    Penilaian cepat untuk banyak siswa dalam satu grid. Tabel bisa di-scroll untuk memudahkan input kriteria dalam jumlah besar.
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <h1 className="text-3xl font-black text-text-main-light">Input Penilaian ATL</h1>
+                  <span className="rounded-full bg-primary/10 px-4 py-1.5 text-sm font-black text-primary">{selectedTopic.label}</span>
+                </div>
+                <p className="mt-2 text-sm text-text-sub-light">
+                  Batch compact mode untuk {selectedClass} dengan {students.length} siswa.
                 </p>
               </div>
-              <div className="inline-flex rounded-2xl border border-stone-200 bg-white p-1 shadow-[0_8px_18px_rgba(15,23,42,0.05)]">
+              <div className="flex flex-wrap items-center gap-3">
+              <div className="inline-flex rounded-2xl border border-stone-200 bg-stone-100 p-1 shadow-inner">
                 <Link
                   to="/input-atl"
-                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-stone-600 transition-all hover:bg-primary/5 hover:text-primary"
+                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-stone-600 transition-all hover:bg-white hover:text-primary"
                 >
                   <span className="material-symbols-outlined text-[18px]">person</span>
                   Detailed
@@ -349,16 +426,29 @@ export default function BatchInputATL() {
                   Batch
                 </span>
               </div>
+              <button
+                type="button"
+                className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-2.5 text-sm font-bold text-emerald-700"
+              >
+                Export Excel
+              </button>
+              <button
+                onClick={handleSend}
+                className="rounded-xl bg-primary px-6 py-2.5 text-sm font-black text-white shadow-lg shadow-primary/20"
+              >
+                Kirim Penilaian
+              </button>
+              </div>
             </div>
 
-            <section className="rounded-[1.8rem] border border-stone-200 bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
-              <div className="grid gap-4 lg:grid-cols-3">
+            <section className="rounded-[1.4rem] border border-stone-200 bg-white p-4 shadow-[0_14px_32px_rgba(15,23,42,0.05)]">
+              <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1.4fr_auto] lg:items-end">
                 <div>
-                  <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Kelas</label>
+                  <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Kelas</label>
                   <select
                     value={selectedClass}
                     onChange={(e) => setSelectedClass(e.target.value)}
-                    className="block w-full rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-900 outline-none transition-all focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
+                    className="block w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-bold text-stone-900 outline-none transition-all focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
                   >
                     {classOptions.map((cls) => (
                       <option key={cls} value={cls}>{cls}</option>
@@ -367,11 +457,11 @@ export default function BatchInputATL() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Mata Pelajaran</label>
+                  <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Mata Pelajaran</label>
                   <select
                     value={selectedSubject}
                     onChange={(e) => setSelectedSubject(e.target.value)}
-                    className="block w-full rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-900 outline-none transition-all focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
+                    className="block w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-bold text-stone-900 outline-none transition-all focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
                   >
                     {Object.keys(subjectTopicMap).map((subject) => (
                       <option key={subject} value={subject}>{subject}</option>
@@ -381,7 +471,7 @@ export default function BatchInputATL() {
 
                 <div>
                   <div className="mb-2 flex items-center justify-between">
-                    <label className="block text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Topik</label>
+                    <label className="block text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Subtopik</label>
                     <button
                       type="button"
                       onClick={saveFilterSelection}
@@ -390,13 +480,13 @@ export default function BatchInputATL() {
                       Simpan Default
                     </button>
                   </div>
-                  <div className="flex flex-wrap gap-2 rounded-[1.5rem] border border-stone-200 bg-stone-50 p-3">
+                  <div className="flex flex-wrap gap-2 rounded-xl border border-stone-200 bg-stone-50 p-2">
                     {topicOptions.map((topic, idx) => (
                       <button
                         key={topic.id}
                         type="button"
                         onClick={() => setSelectedTopicIndex(idx)}
-                        className={`rounded-2xl px-4 py-2.5 text-xs font-bold transition-all ${
+                        className={`rounded-lg px-3 py-2 text-xs font-bold transition-all ${
                           selectedTopicIndex === idx
                             ? "bg-primary text-white shadow-[0_10px_25px_rgba(234,179,8,0.18)]"
                             : "border border-stone-200 bg-white text-stone-700 hover:border-primary/40 hover:bg-primary/5"
@@ -407,77 +497,70 @@ export default function BatchInputATL() {
                     ))}
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDetailPanel((value) => !value)}
+                  className={`inline-flex h-[46px] items-center justify-center gap-2 rounded-xl border px-4 text-xs font-black transition-all ${
+                    showDetailPanel
+                      ? "border-orange-200 bg-orange-50 text-orange-700"
+                      : "border-stone-200 bg-white text-stone-600 hover:border-primary/30 hover:bg-primary/5"
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[17px]">{showDetailPanel ? "visibility_off" : "visibility"}</span>
+                  {showDetailPanel ? "Sembunyikan Detail" : "Tampilkan Detail"}
+                </button>
               </div>
             </section>
 
             <section className="rounded-[1.8rem] border border-stone-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
-              <div className="flex flex-col gap-3 border-b border-stone-200 px-6 py-5 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="text-[11px] font-black uppercase tracking-[0.2em] text-stone-500">Batch Entry: Criteria Grid</p>
-                  <h2 className="mt-1 text-xl font-black text-stone-900">
-                    {selectedClass} - {selectedTopic.label}
-                  </h2>
-                  <p className="mt-1 text-xs text-stone-500">
-                    {students.length} siswa, {columns.length} kriteria, {filledCells}/{totalCells} cell terisi
-                  </p>
+              <div className="flex flex-col gap-4 border-b border-stone-200 px-6 py-5 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex max-w-4xl items-start gap-3 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-xs font-semibold text-stone-700">
+                  <span className="material-symbols-outlined mt-0.5 text-[18px] text-primary">info</span>
+                  <div>
+                    <p className="font-black text-stone-900">Mode batch menyimpan otomatis setiap klik level.</p>
+                    <p className="mt-1 leading-5">Pilih level pada cell siswa-kriteria, lalu buka panel detail untuk membaca deskripsi level dan melihat skor real-time siswa.</p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="rounded-2xl border border-stone-200 bg-white px-3 py-2 text-xs font-black text-stone-700">
                     Progress {progress}%
                   </span>
                   <button
-                    type="button"
-                    onClick={resetGrid}
-                    className="rounded-2xl border border-stone-200 bg-white px-4 py-2 text-xs font-bold text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                    onClick={handleSaveDraft}
+                    className="rounded-xl border border-primary/30 bg-primary/10 px-5 py-2.5 text-sm font-black text-primary-hover transition hover:bg-primary hover:text-white"
                   >
-                    Reset Grid
+                    Simpan Draft
                   </button>
                 </div>
               </div>
 
-              <div className="px-6 py-5">
+              <div className={`grid gap-4 px-6 py-5 ${showDetailPanel ? "xl:grid-cols-[minmax(0,1fr)_340px]" : ""}`}>
+                <div className="min-w-0">
                 {columns.length > 0 ? (
-                  <div className="overflow-auto rounded-2xl border border-stone-200 bg-white" style={{ maxHeight: "65vh" }}>
-                    <table className="w-full min-w-[1200px] border-separate border-spacing-0">
-                      <thead className="sticky top-0 z-20 bg-stone-100">
+                  <div className="overflow-auto rounded-2xl border border-stone-200 bg-white" style={{ maxHeight: "66vh" }}>
+                    <table className="w-full min-w-[1180px] border-separate border-spacing-0">
+                      <thead className="sticky top-0 z-20 bg-white">
                         <tr>
-                          <th className="sticky left-0 z-30 min-w-[250px] border-b border-r border-stone-200 bg-stone-100 px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em] text-stone-500">
-                            Student Name
+                          <th className="sticky left-0 z-30 min-w-[170px] border-b border-r border-stone-200 bg-white px-4 py-6 text-left text-[11px] font-black uppercase tracking-[0.18em] text-stone-500">
+                            Siswa
                           </th>
-                          {columns.map((column) => (
-                            <th
-                              key={column.id}
-                              className="min-w-[300px] border-b border-r border-stone-200 bg-stone-100 px-4 py-3 text-left"
-                            >
-                              <p className="text-[11px] font-black uppercase tracking-[0.14em] text-stone-700">
-                                {column.title}
-                              </p>
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {column.atlNames.length > 0 ? (
-                                  column.atlNames.map((atlName) => {
-                                    const config = atlConfig[atlName] || {
-                                      icon: "label",
-                                      color: "bg-stone-100 text-stone-600",
-                                    };
-
-                                    return (
-                                      <span
-                                        key={atlName}
-                                        className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-black ${config.color}`}
-                                      >
-                                        <span className="material-symbols-outlined text-[13px]">{config.icon}</span>
-                                        {atlName}
-                                      </span>
-                                    );
-                                  })
-                                ) : (
-                                  <span className="inline-flex rounded-full bg-stone-100 px-2 py-1 text-[10px] font-black text-stone-600">
-                                    ATL
-                                  </span>
-                                )}
-                              </div>
-                            </th>
-                          ))}
+                          {columns.map((column) => {
+                            return (
+                              <th
+                                key={column.id}
+                                className="min-w-[165px] border-b border-r border-stone-200 bg-white px-4 py-5 text-left"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => students[0] && openMatrix(students[0], column)}
+                                  className="block w-full text-left"
+                                  title={column.atlNames.join(", ")}
+                                >
+                                  <span className="line-clamp-2 block text-[12px] font-black leading-5 text-stone-900">{column.title}</span>
+                                </button>
+                              </th>
+                            );
+                          })}
                         </tr>
                       </thead>
                       <tbody>
@@ -487,19 +570,16 @@ export default function BatchInputATL() {
 
                           return (
                           <tr key={student.id} className="odd:bg-white even:bg-stone-50/70">
-                            <td className="sticky left-0 z-10 border-b border-r border-stone-200 bg-inherit px-4 py-3">
+                            <td className="sticky left-0 z-10 border-b border-r border-stone-200 bg-inherit px-4 py-4">
                               <div className="flex items-center gap-3">
                                 <div
-                                  className={`flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${student.avatarTone} text-xs font-black text-stone-900`}
+                                  className={`flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br ${student.avatarTone} text-sm font-black text-stone-900`}
                                 >
                                   {student.initials}
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="truncate text-sm font-bold text-stone-900">{student.name}</p>
-                                  <p className="text-xs text-stone-500">{student.nis}</p>
-                                  <p className={`mt-1 text-sm font-black ${hasScore ? "text-emerald-700" : "text-stone-400"}`}>
-                                    {hasScore ? `${studentScore}%` : "Belum dinilai"}
-                                  </p>
+                                  <p className="truncate text-sm font-black text-stone-900">{student.name}</p>
+                                  <p className="text-[11px] font-semibold text-stone-500">{student.nis}</p>
                                 </div>
                               </div>
                             </td>
@@ -511,17 +591,15 @@ export default function BatchInputATL() {
                               const isMatrixOpen =
                                 matrixContext?.student?.id === student.id &&
                                 matrixContext?.column?.id === column.id;
-                              const activePhrase = activeOption
-                                ? column.levels?.[activeOption.code] || "Frasa level belum tersedia."
-                                : "Pilih salah satu skala untuk menampilkan frasa penilaian.";
 
                               return (
                                 <td
                                   key={`${student.id}-${column.id}`}
-                                  className={`border-b border-r px-3 py-3 transition-colors ${tone.cell}`}
+                                  className={`border-b border-r px-3 py-5 transition-colors ${isMatrixOpen ? "bg-orange-50 ring-1 ring-inset ring-orange-300" : "bg-white hover:bg-stone-50"}`}
+                                  onClick={() => openMatrix(student, column)}
                                 >
-                                  <div className="space-y-2">
-                                    <div className="grid grid-cols-5 gap-1.5">
+                                  <div className="flex items-center justify-center">
+                                    <div className="grid grid-cols-5 gap-2">
                                       {ratingOptions.map((option) => {
                                         const selected = value === option.label;
                                         const optionTone = levelStyleMap[option.code];
@@ -530,16 +608,18 @@ export default function BatchInputATL() {
                                           <button
                                             key={option.code}
                                             type="button"
-                                            onClick={() =>
+                                            onClick={(event) => {
+                                              event.stopPropagation();
                                               handleCellChange(
                                                 student.id,
                                                 column.id,
                                                 selected ? "" : option.label
-                                              )
-                                            }
-                                            className={`flex h-9 items-center justify-center rounded-xl border text-[11px] font-black transition-all ${
+                                              );
+                                              openMatrix(student, column);
+                                            }}
+                                            className={`relative flex h-8 min-w-9 items-center justify-center rounded-md border px-1 text-[10px] font-black transition-all ${
                                               selected
-                                                ? `${optionTone.button} -translate-y-0.5 shadow-lg`
+                                                ? `${optionTone.button} shadow-md`
                                                 : optionTone.idleButton
                                             }`}
                                             title={`${option.code} - ${option.label}`}
@@ -550,40 +630,6 @@ export default function BatchInputATL() {
                                         );
                                       })}
                                     </div>
-                                    <div className="flex items-center justify-between gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => openMatrix(student, column)}
-                                        className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase transition-all ${
-                                          isMatrixOpen
-                                            ? "border-primary bg-primary text-white shadow-sm"
-                                            : "border-stone-200 bg-white text-stone-600 hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-                                        }`}
-                                      >
-                                        <span className="material-symbols-outlined text-[13px]">table_chart</span>
-                                        Matriks
-                                      </button>
-                                      <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase ${tone.chip}`}>
-                                        {activeOption?.code || "-"}
-                                      </span>
-                                    </div>
-
-                                    <div className="rounded-xl border border-stone-200 bg-white px-3 py-2">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <p className="truncate text-[11px] font-black uppercase tracking-[0.14em] text-stone-500">
-                                          {activeOption?.label || "Belum dinilai"}
-                                        </p>
-                                        {activeOption && (
-                                          <span className="text-[10px] font-black text-stone-400">
-                                            {activeOption.code}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <p className="mt-1 text-[11px] leading-4 text-stone-700">
-                                        {activePhrase}
-                                      </p>
-                                    </div>
-
                                   </div>
                                 </td>
                               );
@@ -599,12 +645,135 @@ export default function BatchInputATL() {
                     Belum ada kriteria ATL untuk topik ini.
                   </div>
                 )}
+                </div>
+
+                {showDetailPanel && (
+                <aside className="rounded-[1.5rem] border border-stone-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.08)] xl:sticky xl:top-4 xl:max-h-[65vh] xl:overflow-y-auto">
+                  <div className="mb-5 flex items-start justify-between gap-3 border-b border-stone-100 pb-4">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-stone-500">Detail Level</p>
+                      <h3 className="mt-3 text-sm font-black text-stone-900">
+                        {detailContext?.column.title || "Pilih kriteria"}
+                      </h3>
+                      <p className="mt-1 text-xs font-semibold text-stone-500">
+                        {detailContext?.student.name || "Klik salah satu sel pada tabel"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closeMatrix}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                      aria-label="Tutup detail"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">close</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-5">
+                    <div className="rounded-2xl border border-stone-200 bg-white p-4">
+                      <p className="text-[11px] font-black uppercase tracking-[0.14em] text-stone-500">Real-time Score</p>
+                      <div className="mt-3 flex items-end justify-between gap-3">
+                        <div>
+                          <p className="text-4xl font-black text-stone-900">
+                            {Number.isFinite(detailStudentScore) ? detailStudentScore : 0}
+                            <span className="text-base text-stone-500">/100</span>
+                          </p>
+                        </div>
+                        <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${detailStudentCategory.className}`}>
+                          {detailStudentCategory.label}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="mb-2 text-[11px] font-black uppercase tracking-[0.14em] text-stone-500">Level Terpilih</p>
+                      <div className="flex items-center gap-3 rounded-2xl border border-stone-100 bg-stone-50 p-3">
+                        <span className={`inline-flex h-10 w-12 items-center justify-center rounded-xl border text-sm font-black ${detailTone.chip}`}>
+                          {detailOption?.code || "-"}
+                        </span>
+                        <div>
+                          <p className={`text-sm font-black ${detailTone.text}`}>{detailOption?.label || "Belum dinilai"}</p>
+                          <p className="text-xs font-semibold text-stone-500">Klik level pada tabel untuk memilih.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="mb-2 text-[11px] font-black uppercase tracking-[0.14em] text-stone-500">Deskripsi Level</p>
+                      <p className="rounded-2xl border border-stone-100 bg-white p-4 text-sm leading-6 text-stone-700">
+                        {detailOption && detailContext
+                          ? detailContext.column.levels?.[detailOption.code] || "Frasa belum tersedia."
+                          : "Pilih level pada salah satu cell untuk melihat deskripsi rubric."}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-primary/30 bg-primary/10 p-4">
+                      <p className="text-[11px] font-black uppercase tracking-[0.14em] text-stone-600">Status Cell</p>
+                      <p className="mt-2 text-xl font-black text-stone-900">{detailOption ? "Sudah dinilai" : "Belum dinilai"}</p>
+                    </div>
+
+                    <div>
+                      <p className="mb-3 text-[11px] font-black uppercase tracking-[0.14em] text-stone-500">Semua Level</p>
+                      <div className="space-y-3">
+                        {ratingOptions.map((option) => {
+                          const optionTone = levelStyleMap[option.code];
+                          const selected = detailValue === option.label;
+                          return (
+                            <button
+                              key={option.code}
+                              type="button"
+                              disabled={!detailContext}
+                              onClick={() => detailContext && handleCellChange(detailContext.student.id, detailContext.column.id, option.label)}
+                              className={`grid w-full grid-cols-[52px_1fr_54px] items-center gap-3 rounded-2xl border p-3 text-left transition-all ${
+                                selected ? "border-[#FDAD67] bg-[#FDAD67]/15 shadow-sm" : "border-stone-100 bg-white hover:border-primary/30 hover:bg-primary/5"
+                              }`}
+                            >
+                              <span className={`inline-flex h-10 items-center justify-center rounded-xl border text-xs font-black ${optionTone.chip}`}>
+                                {option.code}
+                              </span>
+                              <span>
+                                <span className="block text-xs font-black text-stone-900">{option.label}</span>
+                                <span className="mt-1 line-clamp-2 block text-[11px] leading-4 text-stone-600">
+                                  {detailContext?.column.levels?.[option.code] || "Frasa belum tersedia."}
+                                </span>
+                              </span>
+                              <span className="text-center text-[10px] font-bold text-stone-500">
+                                Skor<br />
+                                <strong className="text-stone-900">{Math.round((ratingValueMap[option.label] || 0) * 100)}</strong>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </aside>
+                )}
+                <div className={showDetailPanel ? "xl:col-span-2" : ""}>
+                  <div className="flex flex-col gap-3 rounded-2xl bg-stone-50 px-4 py-4 text-xs font-semibold text-stone-500 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="material-symbols-outlined text-[18px] text-orange-500">info</span>
+                      Rubrik dan bobot dihitung otomatis menggunakan metode Fuzzy-AHP.
+                    </div>
+                    <div className="flex items-center justify-end gap-3">
+                      <span>Menampilkan {Math.min(students.length, 8)} dari {students.length} siswa</span>
+                      <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg border border-stone-200 bg-white">
+                        <span className="material-symbols-outlined text-[16px]">chevron_left</span>
+                      </button>
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-xs font-black text-white">1</span>
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-stone-200 bg-white text-xs font-black text-stone-600">2</span>
+                      <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg border border-stone-200 bg-white">
+                        <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
           </div>
         </div>
 
-        <div className="border-t border-stone-200 bg-white px-5 py-4 shadow-[0_-8px_22px_rgba(15,23,42,0.04)]">
+        <div className="hidden border-t border-stone-200 bg-white px-5 py-4 shadow-[0_-8px_22px_rgba(15,23,42,0.04)]">
           <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4">
             <Link
               to="/students"
@@ -630,7 +799,7 @@ export default function BatchInputATL() {
           </div>
         </div>
 
-        {matrixContext &&
+        {false && matrixContext &&
           (() => {
             const { student, column } = matrixContext;
             const value = batchRatingsByStudent[student.id]?.[column.id] || "";

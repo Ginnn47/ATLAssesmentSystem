@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { dummyATL, saveATLData } from "./dummyATL";
+import { calculateContextWeights, getCriteria, getWeights, saveWeights } from "../../services/atlApi";
+import { getSubjectData } from "../../services/topicCatalog";
 
  const scaleOptions = [
   { label: "Sama penting", value: 1, tfn: [1, 1, 1] },
@@ -9,29 +11,6 @@ import { dummyATL, saveATLData } from "./dummyATL";
   { label: "Mutlak lebih penting", value: 9, tfn: [8, 9, 9] },
  ];
  
-const subjectData = [
-  { id: "singing", label: "Singing", topics: [
-    { id: "singing_christmas_carol", label: "Christmas Carol" },
-    { id: "singing_choir", label: "Choir" },
-    { id: "singing_vocal_technique", label: "Vocal Technique" },
-    { id: "singing_music_theory_basics", label: "Music Theory Basics" },
-    { id: "singing_performance_practice", label: "Performance Practice" }
-  ]},
-  { id: "ipa", label: "IPA (Sains)", topics: [
-    { id: "ipa_energi_perubahan", label: "Energi Perubahan" },
-    { id: "ipa_tata_surya", label: "Tata Surya" },
-    { id: "ipa_sistem_tubuh", label: "Sistem Tubuh" },
-    { id: "ipa_ekosistem", label: "Ekosistem" }
-  ]},
-  { id: "math", label: "Mathematics", topics: [
-    { id: "math_linear_equations", label: "Linear Equations" },
-    { id: "math_quadratic_functions", label: "Quadratic Functions" },
-    { id: "math_geometry", label: "Geometry" },
-    { id: "math_trigonometry", label: "Trigonometry" },
-    { id: "math_statistics", label: "Statistics" }
-  ]}
-];
-
  // TFN Helper Functions
 const round = (n) => Math.round(n * 100) / 100;
 
@@ -86,22 +65,38 @@ const toFraction = (val) => {
 };
 
 const WEIGHT_PRECISION = 6;
-const MIN_WEIGHT_FLOOR = 0.01;
 const formatWeightDisplay = (weight) => Number(weight || 0).toFixed(2);
+const riTable = { 1: 0, 2: 0, 3: 0.58, 4: 0.9, 5: 1.12, 6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49 };
+const calculateConsistencyRatio = (matrix) => {
+  const n = matrix.length;
+  if (n <= 2) return 0;
+  const crisp = matrix.map((row) => row.map((cell) => cell[1]));
+  const geometricMeans = crisp.map((row) => row.reduce((acc, value) => acc * Math.max(value, 0.000001), 1) ** (1 / n));
+  const gmTotal = geometricMeans.reduce((acc, value) => acc + value, 0);
+  const weights = gmTotal > 0 ? geometricMeans.map((value) => value / gmTotal) : Array(n).fill(1 / n);
+  const weightedSums = crisp.map((row) => row.reduce((acc, value, index) => acc + value * weights[index], 0));
+  const lambdaValues = weightedSums.map((value, index) => value / weights[index]).filter(Number.isFinite);
+  const lambdaMax = lambdaValues.reduce((acc, value) => acc + value, 0) / lambdaValues.length;
+  const ci = Math.max(0, (lambdaMax - n) / (n - 1));
+  const ri = riTable[n] || 1.49;
+  return ri === 0 ? 0 : Math.round((ci / ri) * 1000000) / 1000000;
+};
 
 // NOTE: calculateResult must live inside ExpertManagement so it can access component state.
 
 const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
+  const [subjectData, setSubjectData] = useState(getSubjectData);
   const [step, setStep] = useState(1);
-  const [selectedSubjectId, setSelectedSubjectId] = useState(subjectData[0].id);
-  const [selectedTopicId, setSelectedTopicId] = useState(subjectData[0].topics[0].id);
+  const [selectedSubjectId, setSelectedSubjectId] = useState(getSubjectData()[0].id);
+  const [selectedTopicId, setSelectedTopicId] = useState(getSubjectData()[0].topics[0].id);
 
   const [pairwise, setPairwise] = useState({});
   const [result, setResult] = useState(null);
+  const [dataVersion, setDataVersion] = useState(0);
 
-  const calculateResult = () => {
-    const n = criteria.length;
-    if (n === 0) return;
+  const buildLocalResultFor = (criteriaList, pairwiseMap = {}) => {
+    const n = criteriaList.length;
+    if (n === 0) return null;
 
     // 1. Build matrix TFN nxn
     let matrix = Array(n).fill(0).map(() =>
@@ -109,9 +104,9 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
     );
 
     // isi dari pairwise
-    Object.values(pairwise).forEach((val) => {
-      const i = criteria.indexOf(val.left);
-      const j = criteria.indexOf(val.right);
+    Object.values(pairwiseMap).forEach((val) => {
+      const i = criteriaList.indexOf(val.left);
+      const j = criteriaList.indexOf(val.right);
 
       const scaleObj = scaleOptions.find(s => s.label === val.scale);
       const tfn = scaleObj ? scaleObj.tfn : [1, 1, 1];
@@ -161,66 +156,141 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
       normalizedWeights = d.map((val) => val / sumD);
     }
 
-    // Terapkan minimum floor lalu normalisasi ulang agar total tetap 1
-    const flooredWeights = normalizedWeights.map((w) => Math.max(w, MIN_WEIGHT_FLOOR));
-    const flooredSum = flooredWeights.reduce((acc, w) => acc + w, 0);
-    const finalWeights = flooredSum > 0 ? flooredWeights.map((w) => w / flooredSum) : Array(n).fill(1 / n);
+    const finalWeights = normalizedWeights;
 
-    criteria.forEach((c, i) => {
+    criteriaList.forEach((c, i) => {
       weights[c] = finalWeights[i].toFixed(WEIGHT_PRECISION);
     });
 
-    setResult({
+    return {
       weights,
       sumD: sumD.toFixed(2),
-      consistency: 0.042, // Mock consistency ratio untuk demo
+      consistency: calculateConsistencyRatio(matrix),
       debug: { matrix, rowSums, total, S, V, d: d.map(val => val.toFixed(2)) }
-    });
+    };
   };
 
-  const handleSaveToSystem = () => {
-    if (!result || !result.weights) return;
-    
-    if (!dummyATL.savedWeights) dummyATL.savedWeights = {};
-    dummyATL.savedWeights[selectedTopicId] = result.weights;
-    
-    saveATLData(dummyATL);
-    alert(`Bobot untuk topik ${selectedTopicId} berhasil disimpan secara permanen!`);
-  };
-
-  // Ambil kriteria dengan ATL skills dari dummyATL berdasarkan topik yang dipilih
-  const criteriaWithATL = useMemo(() => {
-    const rawData = dummyATL[selectedTopicId] || [];
-    const tempMap = {};
-
-    rawData.forEach(item => {
-      item.atl.forEach(atlSkill => {
-        // Gunakan format label yang bersih untuk menghindari duplikasi key
-        const label = `${item.kriteria} (${atlSkill})`;
-        tempMap[label] = [atlSkill];
+  const calculateResult = async () => {
+    const packageResults = {};
+    const flatWeights = {};
+    rubricPackages.forEach((pkg) => {
+      const localResult = buildLocalResultFor(pkg.subskills, pairwise[pkg.key] || {});
+      if (!localResult) return;
+      packageResults[pkg.key] = {
+        ...localResult,
+        title: pkg.title,
+        criteriaTopic: pkg.criteriaTopic,
+        subskills: pkg.subskills,
+      };
+      Object.entries(localResult.weights || {}).forEach(([subskill, weight]) => {
+        flatWeights[`${pkg.title} (${subskill})`] = weight;
       });
     });
 
-    return tempMap;
-  }, [selectedTopicId]);
+    const consistencyValues = Object.values(packageResults).map((item) => Number(item.consistency || 0));
+    const firstPackage = Object.values(packageResults)[0];
+    const localResult = {
+      weights: flatWeights,
+      packages: packageResults,
+      consistency: consistencyValues.length ? Math.max(...consistencyValues) : 0,
+      sumD: firstPackage?.sumD || "0.00",
+      debug: firstPackage?.debug || { packages: packageResults },
+    };
 
-  const criteria = useMemo(() => Object.keys(criteriaWithATL), [criteriaWithATL]);
+    if (Object.keys(packageResults).length === 0) return;
 
-  const pairs = useMemo(() => {
-    let pairs = [];
-    for (let i = 0; i < criteria.length; i++) {
-      for (let j = i + 1; j < criteria.length; j++) {
-        pairs.push([criteria[i], criteria[j]]);
+    setResult(localResult);
+    try {
+      const apiResult = await calculateContextWeights(selectedTopicId, {
+        __criterionPackages: true,
+        packages: packageResults,
+        weights: flatWeights,
+      });
+      if (apiResult?.weights && Object.keys(apiResult.weights).length > 0) {
+        setResult({ ...localResult, ...apiResult, packages: apiResult.packages || packageResults });
       }
+    } catch (error) {
+      setResult(localResult);
     }
-    return pairs;
-  }, [criteria]);
+  };
 
-  // Reset pairwise jika kriteria berubah
+  const handleSaveToSystem = async () => {
+    if (!result || !result.weights) return;
+    
+    if (!dummyATL.savedWeights) dummyATL.savedWeights = {};
+    dummyATL.savedWeights[selectedTopicId] = {
+      ...(result.weights || {}),
+      __mode: "criterion-packages",
+      packages: result.packages || {},
+    };
+    
+    saveATLData(dummyATL);
+    await saveWeights(selectedTopicId, dummyATL.savedWeights[selectedTopicId], result.debug || {});
+    alert(`Bobot untuk topik ${selectedTopicId} berhasil disimpan secara permanen!`);
+  };
+
+  const rubricPackages = useMemo(() => {
+    const rawData = dummyATL[selectedTopicId] || [];
+    return rawData
+      .filter((item) => Array.isArray(item.atl) && item.atl.length > 0)
+      .map((item, index) => ({
+        key: item.id ? `rubric-${item.id}` : `${item.kriteria}-${index}`,
+        title: item.kriteria,
+        criteriaTopic: item.criteriaTopic || "Rubric Evidence",
+        categories: item.atlCategories || (item.category ? item.category.split(",").map((name) => name.trim()).filter(Boolean) : []),
+        subskills: Array.from(new Set(item.atl || [])),
+      }));
+  }, [selectedTopicId, dataVersion]);
+
+  const packagePairs = useMemo(() => (
+    rubricPackages.reduce((acc, pkg) => {
+      const pairs = [];
+      for (let i = 0; i < pkg.subskills.length; i++) {
+        for (let j = i + 1; j < pkg.subskills.length; j++) {
+          pairs.push([pkg.subskills[i], pkg.subskills[j]]);
+        }
+      }
+      acc[pkg.key] = pairs;
+      return acc;
+    }, {})
+  ), [rubricPackages]);
+
+  const totalPairCount = useMemo(
+    () => Object.values(packagePairs).reduce((acc, pairs) => acc + pairs.length, 0),
+    [packagePairs]
+  );
+  const filledPairCount = useMemo(
+    () => Object.values(pairwise).reduce((acc, packagePairwise) => acc + Object.keys(packagePairwise || {}).length, 0),
+    [pairwise]
+  );
+  const activeCriteriaForDebug = useMemo(
+    () => rubricPackages.flatMap((pkg) => pkg.subskills),
+    [rubricPackages]
+  );
+  const displayPackage = result?.packages ? Object.values(result.packages)[0] : null;
+  const criteria = displayPackage?.subskills || activeCriteriaForDebug;
+
+  // Reset pairwise jika subskill berubah
   useEffect(() => {
     setPairwise({});
     setResult(null);
-  }, [criteria]);
+  }, [rubricPackages]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([getCriteria(selectedTopicId), getWeights(selectedTopicId)]).then(() => {
+      if (!cancelled) setDataVersion((version) => version + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTopicId]);
+
+  useEffect(() => {
+    const syncTopics = () => setSubjectData(getSubjectData());
+    window.addEventListener("atl-topics-updated", syncTopics);
+    return () => window.removeEventListener("atl-topics-updated", syncTopics);
+  }, []);
 
   // Kalkulasi Real-time
   useEffect(() => {
@@ -236,7 +306,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
 
   const steps = [
     { id: 1, name: "Context", icon: "hub" },
-    { id: 2, name: "Kriteria", icon: "list_alt" },
+    { id: 2, name: "Subskill", icon: "list_alt" },
     { id: 3, name: "Pairwise", icon: "compare_arrows" },
     { id: 4, name: "Fuzzy Scale", icon: "query_stats" },
     { id: 5, name: "Result", icon: "analytics" },
@@ -317,22 +387,26 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
             </div>
           )}
 
-          {/* STEP 2: KRITERIA */}
+          {/* STEP 2: SUBSKILL */}
           {step === 2 && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <h2 className="mb-6 text-xl font-black text-stone-900">Kriteria dalam Topik "{subjectData.find(s => s.id === selectedSubjectId)?.topics.find(t => t.id === selectedTopicId)?.label}"</h2>
+              <h2 className="mb-2 text-xl font-black text-stone-900">Paket Pairwise per Criterion dalam Topik "{subjectData.find(s => s.id === selectedSubjectId)?.topics.find(t => t.id === selectedTopicId)?.label}"</h2>
+              <p className="mb-6 text-sm font-semibold text-stone-500">
+                Setiap rubric criterion menjadi evidence package sendiri. Pairwise hanya membandingkan ATL subskill yang relevan di dalam criterion tersebut.
+              </p>
               <div className="grid gap-4 md:grid-cols-3">
-                {criteria.map((c, i) => (
-                  <div key={i} className="group relative overflow-hidden rounded-2xl border-2 border-stone-100 bg-white p-6 shadow-sm transition-all hover:border-primary/50 hover:shadow-md">
+                {rubricPackages.map((pkg) => (
+                  <div key={pkg.key} className="group relative overflow-hidden rounded-2xl border-2 border-stone-100 bg-white p-6 shadow-sm transition-all hover:border-primary/50 hover:shadow-md">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-black text-stone-800">{c}</span>
+                      <span className="text-sm font-black text-stone-800">{pkg.title}</span>
                       <div className="h-6 w-6 rounded-full bg-emerald-500 flex items-center justify-center text-white">
                         <span className="material-symbols-outlined text-sm font-bold">check</span>
                       </div>
                     </div>
-                    <p className="mt-4 text-[10px] font-bold uppercase tracking-widest text-stone-400">ATL Skills</p>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-stone-400">{pkg.criteriaTopic}</p>
+                    <p className="mt-4 text-[10px] font-bold uppercase tracking-widest text-stone-400">ATL Subskill dalam Paket</p>
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {criteriaWithATL[c]?.map((atlSkill, idx) => (
+                      {pkg.subskills.map((atlSkill, idx) => (
                         <span key={idx} className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700">
                           {atlSkill}
                         </span>
@@ -353,31 +427,38 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-12">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-xl font-black text-stone-900 italic underline decoration-primary decoration-4 underline-offset-4">Interactive Comparison</h2>
-                  <p className="text-xs text-stone-500 mt-2 font-bold">Hasil bobot akan ter-update secara otomatis di layar Anda.</p>
+                  <h2 className="text-xl font-black text-stone-900 italic underline decoration-primary decoration-4 underline-offset-4">Criterion Package Comparison</h2>
+                  <p className="text-xs text-stone-500 mt-2 font-bold">Setiap blok di bawah adalah 1 paket pairwise untuk 1 rubric criterion.</p>
                 </div>
                 <span className="p-4 bg-primary/5 rounded-2xl border border-primary/20">
                   <p className="text-[10px] font-black uppercase text-primary tracking-widest mb-1 text-right">Real-time Status</p>
                   <p className="text-sm font-black text-stone-900">
-                    {Object.keys(pairwise).length} / {pairs.length} Perbandingan Terisi
+                    {filledPairCount} / {totalPairCount} Perbandingan Terisi
                   </p>
                 </span>
               </div>
 
-              <div className="space-y-16 pb-12">
-                {pairs.map(([c1, c2], idx) => (
-                  <div key={idx} className="relative flex flex-col items-center">
+              <div className="space-y-12 pb-12">
+                {rubricPackages.map((pkg, packageIndex) => (
+                  <section key={pkg.key} className="rounded-[2rem] border-2 border-stone-100 bg-white p-6 shadow-sm">
+                    <div className="mb-8 flex flex-col gap-3 border-b border-stone-100 pb-5 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">Paket {packageIndex + 1} - {pkg.criteriaTopic}</p>
+                        <h3 className="mt-1 text-lg font-black text-stone-900">{pkg.title}</h3>
+                        <p className="mt-1 text-xs font-semibold text-stone-500">Evidence source ini punya {pkg.subskills.length} ATL subskill relevan.</p>
+                      </div>
+                      <span className="rounded-full bg-stone-100 px-3 py-1 text-[10px] font-black uppercase text-stone-600">
+                        {(pairwise[pkg.key] && Object.keys(pairwise[pkg.key]).length) || 0}/{packagePairs[pkg.key]?.length || 0} pair
+                      </span>
+                    </div>
+
+                    <div className="space-y-10">
+                      {(packagePairs[pkg.key] || []).map(([c1, c2], idx) => (
+                  <div key={`${pkg.key}-${idx}`} className="relative flex flex-col items-center">
                     <div className="mb-8 flex w-full items-center justify-between px-8">
                       <div className="text-center w-1/3">
-                        <span className="block text-[10px] font-black uppercase text-stone-400 mb-2 tracking-tighter">Kriteria A</span>
+                        <span className="block text-[10px] font-black uppercase text-stone-400 mb-2 tracking-tighter">Subskill A</span>
                         <h4 className="text-lg font-black text-stone-900 underline decoration-stone-200 mb-2">{c1}</h4>
-                        <div className="flex flex-wrap justify-center gap-1">
-                          {criteriaWithATL[c1]?.map((atlSkill, idx) => (
-                            <span key={idx} className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-[8px] font-bold text-blue-700">
-                              {atlSkill}
-                            </span>
-                          )) || []}
-                        </div>
                       </div>
                       <div className="flex-1 flex items-center justify-center px-4">
                         <div className="h-px w-full bg-gradient-to-r from-transparent via-stone-200 to-transparent relative">
@@ -385,25 +466,24 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                         </div>
                       </div>
                       <div className="text-center w-1/3">
-                        <span className="block text-[10px] font-black uppercase text-stone-400 mb-2 tracking-tighter">Kriteria B</span>
+                        <span className="block text-[10px] font-black uppercase text-stone-400 mb-2 tracking-tighter">Subskill B</span>
                         <h4 className="text-lg font-black text-stone-900 underline decoration-stone-200 mb-2">{c2}</h4>
-                        <div className="flex flex-wrap justify-center gap-1">
-                          {criteriaWithATL[c2]?.map((atlSkill, idx) => (
-                            <span key={idx} className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-[8px] font-bold text-blue-700">
-                              {atlSkill}
-                            </span>
-                          )) || []}
-                        </div>
                       </div>
                     </div>
 
                     <div className="grid w-full grid-cols-5 gap-3">
                       {scaleOptions.map((opt) => {
-                        const isActive = pairwise[idx]?.scale === opt.label;
+                        const isActive = pairwise[pkg.key]?.[idx]?.scale === opt.label;
                         return (
                           <button
                             key={opt.label}
-                            onClick={() => setPairwise({ ...pairwise, [idx]: { left: c1, right: c2, scale: opt.label } })}
+                            onClick={() => setPairwise({
+                              ...pairwise,
+                              [pkg.key]: {
+                                ...(pairwise[pkg.key] || {}),
+                                [idx]: { left: c1, right: c2, scale: opt.label },
+                              },
+                            })}
                             className={`group relative flex flex-col items-center rounded-[2rem] border-2 p-5 transition-all duration-300 ${
                               isActive
                                 ? "border-primary bg-primary/10 shadow-xl shadow-primary/10 -translate-y-1"
@@ -423,20 +503,240 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                       })}
                     </div>
                   </div>
+                      ))}
+                    </div>
+                  </section>
                 ))}
-
               </div>
             </div>
           )}
 
+          {/* STEP 4: ADVANCED ANALYTICS */}
+          {step === 4 && (() => {
+            const packageEntries = Object.entries(result?.packages || {});
+            const [activePackageKey, activePackage] = packageEntries[0] || [];
+            const traceRows = Object.values(pairwise?.[activePackageKey] || {}).slice(0, 5);
+            const weightEntries = Object.entries(activePackage?.weights || {});
+            const dominantEntry = weightEntries.reduce(
+              (best, entry) => (Number(entry[1]) > Number(best?.[1] || 0) ? entry : best),
+              weightEntries[0]
+            );
+            const subskills = activePackage?.subskills || [];
+            const matrix = activePackage?.debug?.matrix || [];
+            const consistency = Number(activePackage?.consistency || result?.consistency || 0);
+
+            return (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <span className="inline-flex rounded-full bg-gradient-to-r from-violet-500 to-purple-500 px-4 py-1.5 text-[11px] font-black uppercase tracking-widest text-white shadow-lg shadow-violet-200">
+                      Mode 2 - Advanced Analytics
+                    </span>
+                    <p className="mt-2 text-sm font-semibold text-stone-500">
+                      Analisis mendalam proses Fuzzy-AHP per criterion package.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setStep(5)}
+                      className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-black text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">arrow_back</span>
+                      Kembali ke Result
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-700"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">ios_share</span>
+                      Export Detail
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-5">
+                  <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
+                    <h3 className="mb-1 flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-stone-700">
+                      <span className="flex h-5 w-5 items-center justify-center rounded bg-emerald-500 text-[10px] text-white">1</span>
+                      Full Weight Breakdown
+                    </h3>
+                    <p className="mb-4 text-[11px] font-semibold text-stone-500">
+                      Bobot lokal untuk {activePackage?.title || "criterion terpilih"}.
+                    </p>
+                    <div className="overflow-hidden rounded-xl border border-stone-100">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-stone-50 text-[10px] uppercase tracking-widest text-stone-500">
+                          <tr>
+                            <th className="px-3 py-2">ATL</th>
+                            <th className="px-3 py-2 text-center">Weight</th>
+                            <th className="px-3 py-2 text-center">Rank</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-stone-100">
+                          {weightEntries.length > 0 ? weightEntries.map(([name, weight], index) => (
+                            <tr key={name}>
+                              <td className="px-3 py-2 font-black text-stone-800">{name}</td>
+                              <td className="px-3 py-2 text-center font-mono font-black text-primary">{formatWeightDisplay(weight)}</td>
+                              <td className="px-3 py-2 text-center">
+                                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-[10px] font-black text-amber-700">
+                                  {index + 1}
+                                </span>
+                              </td>
+                            </tr>
+                          )) : (
+                            <tr><td colSpan="3" className="px-3 py-6 text-center text-stone-400">Belum ada hasil.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className={`mt-4 rounded-xl px-3 py-2 text-[11px] font-black ${
+                      consistency < 0.1 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                    }`}>
+                      Consistency Ratio (CR): {consistency.toFixed(2)}
+                    </div>
+                  </section>
+
+                  <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
+                    <h3 className="mb-1 flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-stone-700">
+                      <span className="flex h-5 w-5 items-center justify-center rounded bg-emerald-500 text-[10px] text-white">2</span>
+                      Pairwise Trace
+                    </h3>
+                    <p className="mb-4 text-[11px] font-semibold text-stone-500">Jejak perbandingan pada paket aktif.</p>
+                    <div className="space-y-2">
+                      {traceRows.length > 0 ? traceRows.map((row, index) => (
+                        <div key={`${row.left}-${row.right}-${index}`} className="rounded-xl border border-stone-100 bg-stone-50 p-3">
+                          <p className="text-xs font-black text-stone-800">{row.left} &gt; {row.right}</p>
+                          <p className="mt-1 text-[11px] font-bold text-primary">{row.scale}</p>
+                        </div>
+                      )) : (
+                        <div className="rounded-xl border border-dashed border-stone-200 p-6 text-center text-xs font-semibold text-stone-400">
+                          Lengkapi pairwise untuk melihat trace.
+                        </div>
+                      )}
+                    </div>
+                    <p className="mt-3 rounded-xl bg-blue-50 px-3 py-2 text-[11px] font-bold text-blue-700">
+                      Total comparison valid: {traceRows.length}/{packagePairs?.[activePackageKey]?.length || 0}
+                    </p>
+                  </section>
+
+                  <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
+                    <h3 className="mb-1 flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-stone-700">
+                      <span className="flex h-5 w-5 items-center justify-center rounded bg-emerald-500 text-[10px] text-white">3</span>
+                      Fuzzy Detail
+                    </h3>
+                    <p className="mb-4 text-[11px] font-semibold text-stone-500">Contoh detail perhitungan untuk ATL dominan.</p>
+                    <div className="rounded-xl border border-stone-100 bg-stone-50 p-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-stone-500">Pilih ATL</p>
+                      <p className="mt-1 text-sm font-black text-stone-900">{dominantEntry?.[0] || "-"}</p>
+                    </div>
+                    <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                      {["Lower", "Middle", "Upper"].map((label, index) => (
+                        <div key={label} className="rounded-xl border border-stone-100 bg-white p-3">
+                          <p className="text-[10px] font-black uppercase text-stone-400">{label}</p>
+                          <p className="mt-1 font-mono text-sm font-black text-stone-900">
+                            {activePackage?.debug?.S?.[0]?.[index]?.toFixed(2) || "0.00"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-4 rounded-xl border border-violet-100 bg-violet-50 p-4">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-violet-500">Hasil Akhir</p>
+                      <p className="mt-1 text-2xl font-black text-violet-700">{formatWeightDisplay(dominantEntry?.[1])}</p>
+                    </div>
+                  </section>
+
+                  <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
+                    <h3 className="mb-1 flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-stone-700">
+                      <span className="flex h-5 w-5 items-center justify-center rounded bg-emerald-500 text-[10px] text-white">4</span>
+                      Inference Graph
+                    </h3>
+                    <p className="mb-4 text-[11px] font-semibold text-stone-500">Alur pengaruh ATL dalam satu criterion.</p>
+                    <div className="relative h-56 rounded-2xl bg-stone-50">
+                      {weightEntries.slice(0, 5).map(([name, weight], index) => {
+                        const positions = [
+                          "left-[35%] top-4 bg-amber-100 text-amber-700",
+                          "left-4 top-[44%] bg-emerald-100 text-emerald-700",
+                          "right-4 top-[44%] bg-blue-100 text-blue-700",
+                          "left-[20%] bottom-4 bg-violet-100 text-violet-700",
+                          "right-[20%] bottom-4 bg-teal-100 text-teal-700",
+                        ];
+                        return (
+                          <div
+                            key={name}
+                            className={`absolute flex h-20 w-24 flex-col items-center justify-center rounded-full border border-white text-center shadow-sm ${positions[index] || positions[0]}`}
+                          >
+                            <span className="material-symbols-outlined text-[18px]">hub</span>
+                            <span className="mt-1 line-clamp-2 px-2 text-[10px] font-black">{name}</span>
+                            <span className="text-[10px] font-mono">({formatWeightDisplay(weight)})</span>
+                          </div>
+                        );
+                      })}
+                      <svg className="absolute inset-0 h-full w-full" viewBox="0 0 260 220">
+                        <path d="M130 62 C80 80 55 105 48 132" fill="none" stroke="#a78bfa" strokeWidth="2" strokeDasharray="5 4" />
+                        <path d="M130 62 C180 80 205 105 212 132" fill="none" stroke="#a78bfa" strokeWidth="2" />
+                        <path d="M80 140 C105 165 120 178 130 188" fill="none" stroke="#a78bfa" strokeWidth="2" strokeDasharray="5 4" />
+                        <path d="M180 140 C155 165 140 178 130 188" fill="none" stroke="#a78bfa" strokeWidth="2" />
+                      </svg>
+                    </div>
+                  </section>
+
+                  <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
+                    <h3 className="mb-1 flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-stone-700">
+                      <span className="flex h-5 w-5 items-center justify-center rounded bg-emerald-500 text-[10px] text-white">5</span>
+                      Heatmap Comparison
+                    </h3>
+                    <p className="mb-4 text-[11px] font-semibold text-stone-500">Intensitas pairwise antar ATL.</p>
+                    <div className="overflow-auto rounded-xl border border-stone-100">
+                      <table className="w-full min-w-[260px] text-center text-[11px]">
+                        <thead className="bg-stone-50 text-[10px] uppercase text-stone-500">
+                          <tr>
+                            <th className="px-2 py-2"></th>
+                            {subskills.map((name) => <th key={name} className="px-2 py-2">{name.slice(0, 3)}</th>)}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {subskills.map((rowName, rowIndex) => (
+                            <tr key={rowName} className="border-t border-stone-100">
+                              <td className="px-2 py-2 font-black text-stone-700">{rowName.slice(0, 3)}</td>
+                              {subskills.map((_, colIndex) => {
+                                const cell = matrix?.[rowIndex]?.[colIndex];
+                                const middle = Array.isArray(cell) ? Number(cell[1]) : 1;
+                                const intensity = Math.min(Math.max(middle / 9, 0.08), 1);
+                                return (
+                                  <td
+                                    key={`${rowName}-${colIndex}`}
+                                    className="px-2 py-2 font-mono font-bold text-stone-800"
+                                    style={{ backgroundColor: `rgba(124, 58, 237, ${intensity})`, color: intensity > 0.55 ? "white" : undefined }}
+                                  >
+                                    {toFraction(middle)}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="mt-4 h-2 rounded-full bg-gradient-to-r from-violet-100 via-violet-400 to-violet-800" />
+                    <div className="mt-1 flex justify-between text-[10px] font-bold text-stone-400">
+                      <span>Lemah</span>
+                      <span>Sangat kuat</span>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* STEP 4: FUZZY SCALE */}
-          {step === 4 && (
+          {false && step === 4 && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
               <div className="mb-2">
                 <h2 className="text-2xl font-black text-stone-900">Mathematical Calculation Flow</h2>
                 <p className="text-sm text-stone-500 mt-2 leading-relaxed max-w-3xl">
                   Bagian ini menunjukkan transformasi data dari pilihan verbal yang Anda masukkan menjadi bobot matematis menggunakan logika 
-                  <strong> Chang's Extent Analysis</strong>. Ikuti langkah-langkah di bawah untuk memahami bagaimana sistem memproses kriteria ATL Anda.
+                  <strong> Chang's Extent Analysis</strong>. Ikuti langkah-langkah di bawah untuk memahami bagaimana sistem memproses subskill ATL Anda.
                 </p>
               </div>
 
@@ -456,7 +756,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                         <table className="min-w-full divide-y divide-stone-200">
                           <thead className="bg-stone-100/50">
                             <tr>
-                              <th className="px-4 py-4 text-left text-[10px] font-bold uppercase tracking-widest text-stone-500">Kriteria</th>
+                              <th className="px-4 py-4 text-left text-[10px] font-bold uppercase tracking-widest text-stone-500">Subskill</th>
                               {criteria.map((crit) => (
                                 <th key={crit} className="px-4 py-4 text-center text-[10px] font-bold uppercase tracking-widest text-stone-500">{crit}</th>
                               ))}
@@ -484,17 +784,17 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     <section>
                       <h3 className="flex items-center gap-3 text-sm font-black uppercase tracking-widest text-primary mb-4">
                         <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[10px] text-white">02</span>
-                        Akumulasi Bobot per Kriteria (Row Sums)
+                        Akumulasi Bobot per Subskill (Row Sums)
                       </h3>
                       <p className="text-sm text-stone-600 mb-6 leading-relaxed">
-                        Sistem menjumlahkan seluruh nilai TFN pada setiap baris untuk melihat total intensitas kepentingan setiap kriteria 
-                        relatif terhadap kriteria lainnya.
+                        Sistem menjumlahkan seluruh nilai TFN pada setiap baris untuk melihat total intensitas kepentingan setiap subskill 
+                        relatif terhadap subskill lainnya.
                       </p>
                       <div className="overflow-x-auto rounded-2xl border border-stone-100 bg-stone-50/50">
                         <table className="min-w-full divide-y divide-stone-200">
                           <thead className="bg-stone-100/50">
                             <tr>
-                              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">Kriteria</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">Subskill</th>
                               <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-stone-500">Jumlah TFN</th>
                             </tr>
                           </thead>
@@ -536,13 +836,13 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                       </h3>
                       <p className="text-sm text-stone-600 mb-6 leading-relaxed">
                         Setiap <strong>Row Sum</strong> dibagi dengan <strong>Total Nilai Fuzzy</strong> (dengan urutan L, M, U yang dibalik pada pembagi) 
-                        untuk mendapatkan <i>Synthetic Extent</i> dari masing-masing kriteria.
+                        untuk mendapatkan <i>Synthetic Extent</i> dari masing-masing subskill.
                       </p>
                       <div className="overflow-x-auto rounded-2xl border border-stone-100 bg-stone-50/50">
                         <table className="min-w-full divide-y divide-stone-200">
                           <thead className="bg-stone-100/50">
                             <tr>
-                              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">Kriteria</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">Subskill</th>
                               <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-stone-500">S_i</th>
                             </tr>
                           </thead>
@@ -566,7 +866,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                         Komparasi Derajat Kemungkinan (Vector d)
                       </h3>
                       <p className="text-sm text-stone-600 leading-relaxed italic">
-                        Pada tahap ini, setiap nilai S_i dibandingkan satu sama lain untuk melihat kemungkinan suatu kriteria lebih besar dari kriteria lainnya. 
+                        Pada tahap ini, setiap nilai S_i dibandingkan satu sama lain untuk melihat kemungkinan suatu subskill lebih besar dari subskill lainnya. 
                         Hasil dari perbandingan ini adalah nilai minimum dari derajat kemungkinan yang akan dinormalisasi pada tahap <strong>Result</strong>.
                       </p>
                     </section>
@@ -583,6 +883,45 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
           {/* STEP 5: RESULT & VALIDATION */}
           {step === 5 && result && (
             <div className="animate-in zoom-in-95 duration-500 space-y-10">
+              {result.packages && (
+                <div className="rounded-[2.5rem] border-2 border-stone-100 bg-white p-8 shadow-xl shadow-stone-200/50">
+                  <h2 className="mb-3 flex items-center gap-2 text-xl font-black uppercase tracking-tight text-stone-900">
+                    <span className="material-symbols-outlined text-primary">inventory_2</span>
+                    Bobot per Criterion Package
+                  </h2>
+                  <p className="mb-6 text-sm leading-relaxed text-stone-600">
+                    Bobot ini lokal untuk setiap evidence source. Criterion yang berbeda boleh punya dominasi ATL yang berbeda.
+                  </p>
+                  <div className="grid gap-5 lg:grid-cols-2">
+                    {Object.entries(result.packages).map(([packageKey, pkg]) => (
+                      <section key={packageKey} className="rounded-2xl border border-stone-200 bg-stone-50/60 p-5">
+                        <div className="mb-4 flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">{pkg.criteriaTopic}</p>
+                            <h3 className="mt-1 text-base font-black text-stone-900">{pkg.title}</h3>
+                          </div>
+                          <span className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-black uppercase ${pkg.consistency < 0.1 ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
+                            CR {pkg.consistency}
+                          </span>
+                        </div>
+                        <div className="space-y-3">
+                          {Object.entries(pkg.weights || {}).map(([subskill, weight]) => (
+                            <div key={subskill}>
+                              <div className="mb-1 flex items-center justify-between gap-3">
+                                <span className="min-w-0 truncate text-xs font-bold text-stone-700">{subskill}</span>
+                                <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-black text-primary">{formatWeightDisplay(weight)}</span>
+                              </div>
+                              <div className="h-2 overflow-hidden rounded-full bg-white">
+                                <div className="h-full bg-primary" style={{ width: `${Math.min(Number(weight || 0) * 100, 100)}%` }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="rounded-[2.5rem] border-2 border-stone-100 bg-white p-10 shadow-xl shadow-stone-200/50">
                 <div className="flex flex-col gap-8 lg:flex-row">
                   <div className="flex-1">
@@ -590,8 +929,8 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                       <span className="material-symbols-outlined text-primary">analytics</span> Hasil Bobot Penilaian
                     </h2>
                     <p className="mb-8 text-sm text-stone-600 leading-relaxed">
-                      Berdasarkan perbandingan berpasangan yang telah dilakukan, kriteria di bawah ini telah dikonversi menjadi bobot prioritas. 
-                      Bobot ini menentukan seberapa besar pengaruh sebuah kriteria terhadap total nilai ATL siswa pada topik 
+                      Berdasarkan perbandingan berpasangan yang telah dilakukan, subskill di bawah ini telah dikonversi menjadi bobot prioritas. 
+                      Bobot ini menentukan seberapa besar pengaruh sebuah subskill terhadap total nilai ATL siswa pada topik 
                       <strong> {subjectData.find(s => s.id === selectedSubjectId)?.topics.find(t => t.id === selectedTopicId)?.label}</strong>.
                     </p>
                     
@@ -633,7 +972,8 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                         <polygon
                           points={criteria.map((c, i) => {
                             const angle = (i * 2 * Math.PI) / criteria.length - Math.PI / 2;
-                            const r = (parseFloat(result.weights[c]) / Math.max(...Object.values(result.weights).map(Number)) || 0) * 40;
+                            const radarWeights = displayPackage?.weights || result.weights || {};
+                            const r = (parseFloat(radarWeights[c]) / Math.max(...Object.values(radarWeights).map(Number)) || 0) * 40;
                             return `${50 + r * Math.cos(angle)},${50 + r * Math.sin(angle)}`;
                           }).join(" ")}
                           fill="rgba(234, 179, 8, 0.2)"
@@ -643,7 +983,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                       </svg>
                     </div>
                     <p className="mt-4 text-center text-[10px] leading-relaxed text-stone-500 italic">
-                      Visualisasi di atas menunjukkan keseimbangan prioritas antar kriteria ATL yang terpilih.
+                      Visualisasi di atas menunjukkan keseimbangan prioritas antar subskill ATL yang terpilih.
                     </p>
                   </div>
                 </div>
@@ -654,7 +994,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                   <span className="material-symbols-outlined text-primary">grid_on</span> Matriks Derajat Kemungkinan (V)
                 </h2>
                 <p className="mb-6 text-sm text-stone-600">
-                  Tabel ini membandingkan setiap pasangan <i>Synthetic Extent</i> (S_i) untuk menentukan probabilitas kriteria satu lebih dominan dari kriteria lainnya.
+                  Tabel ini membandingkan setiap pasangan <i>Synthetic Extent</i> (S_i) untuk menentukan probabilitas subskill satu lebih dominan dari subskill lainnya.
                 </p>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-stone-200">
@@ -690,14 +1030,14 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                   <table className="min-w-full divide-y divide-stone-200">
                     <thead className="bg-stone-50">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">Kriteria</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">Subskill</th>
                         <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-stone-500">Vektor d (Min)</th>
                         <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-stone-500">Bobot (W)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-200 bg-white">
                       {criteria.map((crit, idx) => {
-                        const weight = result.weights[crit];
+                        const weight = result.weights[crit] || displayPackage?.weights?.[crit];
                         return (
                           <tr key={crit}>
                             <td className="px-4 py-3 whitespace-nowrap text-sm font-bold text-stone-900">{crit}</td>
