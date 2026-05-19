@@ -2,8 +2,13 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import Sidebar from "./sidebar";
 import { dummyATL } from "./dummyATL";
 import { allStudentsData } from "./dummyStudents";
-import schoolLogo from "../../assets/Cita_Hati_Christian_School_Logo.jpeg";
-import { getReport, getStudents, hydrateTopic } from "../../services/atlApi";
+import { exportReportExcel, getReport, getStudents, hydrateTopic } from "../../services/atlApi";
+import {
+  getATLCategoryMeta,
+  getScoreLevel,
+  hydrateLabelRegistry,
+  normalizeATLCategory,
+} from "../../services/labelRegistry";
 import { getSubjectData } from "../../services/topicCatalog";
 
 export default function Report() {
@@ -23,6 +28,9 @@ export default function Report() {
 
   // State untuk memicu re-render saat data di localStorage berubah
   const [dataVersion, setDataVersion] = useState(0);
+  const [showExcelPreview, setShowExcelPreview] = useState(false);
+  const [excelPreviewRows, setExcelPreviewRows] = useState([]);
+  const [exporting, setExporting] = useState(false);
 
   const syncDataFromStorage = useCallback(() => {
     const savedData = localStorage.getItem("atl_framework_data");
@@ -37,6 +45,7 @@ export default function Report() {
   useEffect(() => {
     // 1. Sinkronisasi data dari localStorage
     syncDataFromStorage();
+    hydrateLabelRegistry().then(() => setDataVersion((v) => v + 1));
 
     // 2. Load Filter Preference
     const savedPref = localStorage.getItem("report_filter_pref");
@@ -136,10 +145,35 @@ export default function Report() {
   const performanceBandMap = {
     "Sangat Baik": "Excellent",
     "Baik": "Good",
-    "Cukup": "Fair",
-    "Kurang": "Needs Improvement",
+    "Cukup": "Average",
+    "Kurang": "Low",
     "-": "Not Assessed",
   };
+  const ratingNumericMap = {
+    EE: 90,
+    ME: 70,
+    DE: 50,
+    PTE: 30,
+    NFI: 10,
+  };
+  const scoreLevel = getScoreLevel;
+  const atlCategoryOrder = ["Thinking Skills", "Research Skills", "Communication Skills", "Social Skills", "Self-Management Skills"];
+  const exportColumns = [
+    { key: "no", label: "NO" },
+    { key: "className", label: "CLASS" },
+    { key: "nis", label: "NIS" },
+    { key: "name", label: "NAME" },
+    { key: "subject", label: "SUBJECT" },
+    { key: "subTopic", label: "SUB TOPIC" },
+    { key: "score", label: "FUZZY AHP SCORE" },
+    { key: "predikat", label: "GRADE / PREDIKAT" },
+    { key: "progress", label: "PROGRESS" },
+    { key: "thinking", label: "THINKING SKILLS" },
+    { key: "research", label: "RESEARCH SKILLS" },
+    { key: "communication", label: "COMMUNICATION SKILLS" },
+    { key: "social", label: "SOCIAL SKILLS" },
+    { key: "selfManagement", label: "SELF-MANAGEMENT SKILLS" },
+  ];
 
   // Data mentah kalkulasi (Skor & Kategori)
   const allCalculatedData = useMemo(() => {
@@ -278,13 +312,19 @@ export default function Report() {
   const buildStudentDetailReport = useCallback(
     (student) => {
       if (Array.isArray(student.detailItems) && student.detailItems.length > 0) {
+        const assessedCount = student.assessedCount ?? student.detailItems.filter((item) => item.ratingCode).length;
+        const totalIndicators = student.totalIndicators ?? student.detailItems.length;
+        const atlCategoryScores = student.atlCategoryScores || buildATLCategoryScores(student.detailItems, student.catAverages || {});
         return {
           ...student,
           summaryParagraph:
             student.summaryParagraph ||
             `${student.name} achieved an ATL score of ${student.score} in ${currentTopicLabel}.`,
-          assessedCount: student.assessedCount ?? student.detailItems.length,
-          totalIndicators: student.totalIndicators ?? student.detailItems.length,
+          assessedCount,
+          totalIndicators,
+          atlLevel: student.atlLevel || scoreLevel(student.score || student.rawScore),
+          atlCategoryScores,
+          teacherInsight: student.teacherInsight || buildTeacherInsightText(student, student.detailItems, assessedCount, totalIndicators),
         };
       }
 
@@ -324,6 +364,9 @@ export default function Report() {
         detailItems,
         assessedCount,
         totalIndicators,
+        atlLevel: scoreLevel(student.score || student.rawScore),
+        atlCategoryScores: buildATLCategoryScores(detailItems, student.catAverages || {}),
+        teacherInsight: buildTeacherInsightText(student, detailItems, assessedCount, totalIndicators),
       };
     },
     [selectedTopic, currentSubject, currentTopicIndex, currentTopicLabel, performanceBandMap]
@@ -333,54 +376,145 @@ export default function Report() {
     setSelectedDetailStudent(null);
   }, [selectedClass, selectedSubject, selectedTopic, dataVersion]);
 
-  const selectedDetailSpotlight = useMemo(() => {
-    if (!selectedDetailStudent) return { score: "0.00", label: "Not Assessed" };
+  const safeFilePart = (value) => (
+    String(value || "ATL_Report")
+      .replace(/[^a-z0-9._-]+/gi, "_")
+      .replace(/^_+|_+$/g, "")
+  );
 
-    const scoreValue = Number(selectedDetailStudent.score);
-    const normalizedScore = Number.isFinite(scoreValue) ? scoreValue : 0;
+  const getCategoryExportValue = (student, categoryName) => {
+    const raw = student.catAverages?.[categoryName];
+    if (raw === undefined || raw === null || raw === "" || Number(raw) === 0) return "-";
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) ? Number(numeric.toFixed(2)) : raw;
+  };
 
-    const label = selectedDetailStudent.predikat && selectedDetailStudent.predikat !== "-"
-      ? selectedDetailStudent.predikat
-      : "Belum Dinilai";
+  const getPerformanceDisplay = (student) => {
+    const score = Number(student?.rawScore ?? student?.score ?? 0);
+    if (!Number.isFinite(score) || score <= 0 || student?.predikat === "-") {
+      return { label: "Critical", className: "bg-red-100 text-red-700" };
+    }
+    const level = scoreLevel(score);
+    return { label: level.label, className: level.className || level.badgeClass };
+  };
 
-    const toneMap = {
-      "Sangat Baik": {
-        scoreClass: "text-amber-300",
-        badgeClass: "border-amber-300/45 bg-amber-300/15 text-amber-100",
-        panelClass: "border-amber-300/30 bg-amber-300/10",
-      },
-      Baik: {
-        scoreClass: "text-amber-300",
-        badgeClass: "border-amber-300/45 bg-amber-300/15 text-amber-100",
-        panelClass: "border-amber-300/30 bg-amber-300/10",
-      },
-      Cukup: {
-        scoreClass: "text-amber-200",
-        badgeClass: "border-amber-300/40 bg-amber-300/10 text-amber-100",
-        panelClass: "border-amber-300/25 bg-amber-300/10",
-      },
-      Kurang: {
-        scoreClass: "text-amber-200",
-        badgeClass: "border-amber-300/35 bg-amber-300/10 text-amber-100",
-        panelClass: "border-amber-300/25 bg-amber-300/10",
-      },
-      "Belum Dinilai": {
-        scoreClass: "text-amber-100",
-        badgeClass: "border-amber-300/30 bg-amber-300/10 text-amber-100",
-        panelClass: "border-amber-300/20 bg-amber-300/10",
-      },
-    };
+  const buildATLCategoryScores = (detailItems, catAverages = {}) => {
+    const buckets = atlCategoryOrder.reduce((acc, category) => ({ ...acc, [category]: [] }), {});
+    atlCategoryOrder.forEach((category) => {
+      const raw = catAverages?.[category];
+      const numeric = Number(raw);
+      if (raw !== undefined && raw !== null && raw !== "" && numeric > 0) buckets[category].push(numeric);
+    });
 
-    const tone = toneMap[label] || toneMap["Belum Dinilai"];
+    (detailItems || []).forEach((item) => {
+      const numeric = ratingNumericMap[item.ratingCode];
+      if (!numeric) return;
+      let categories = [];
+      if (Array.isArray(item.subskills) && item.subskills.length > 0) {
+        categories = item.subskills.map((subskill) => subskill.category?.name).filter(Boolean);
+      }
+      if (categories.length === 0 && item.categoryName) {
+        categories = String(item.categoryName).split(",").map((category) => category.trim()).filter(Boolean);
+      }
+      if (categories.length === 0 && atlCategoryOrder.includes(normalizeATLCategory(item.atlName))) {
+        categories = [normalizeATLCategory(item.atlName)];
+      }
+      categories.forEach((category) => {
+        const normalized = normalizeATLCategory(category);
+        if (buckets[normalized]) buckets[normalized].push(numeric);
+      });
+    });
 
-    return {
-      score: normalizedScore.toFixed(2),
-      label,
-      scoreClass: tone.scoreClass,
-      badgeClass: tone.badgeClass,
-      panelClass: tone.panelClass,
-    };
-  }, [selectedDetailStudent]);
+    return atlCategoryOrder.map((category) => {
+      const values = buckets[category];
+      const score = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+      return {
+        name: category,
+        score: Number(score.toFixed(1)),
+        assessedIndicators: values.length,
+        level: scoreLevel(score),
+      };
+    });
+  };
+
+  const buildTeacherInsightText = (student, detailItems, assessedCount, totalIndicators) => {
+    const score = Number(student.score || student.rawScore || 0);
+    const level = scoreLevel(score);
+    const assessed = (detailItems || []).filter((item) => item.ratingCode);
+    const strong = assessed.filter((item) => ["EE", "ME"].includes(item.ratingCode));
+    const focus = assessed.filter((item) => ["DE", "PTE", "NFI"].includes(item.ratingCode));
+    const uniqueNames = (items) => [...new Set(items.map((item) => item.atlName || item.kriteria).filter(Boolean))].slice(0, 2).join(", ");
+    const evidence = assessed.find((item) => item.levelDescription)?.levelDescription;
+    let text = `${student.name} berada pada level ${level.label} dalam ${currentSubject?.label || selectedSubject} (${currentTopicLabel}) dengan skor ATL ${score.toFixed(2)}, berdasarkan ${assessedCount}/${totalIndicators} indikator softskill ATL yang sudah dinilai.`;
+    if (uniqueNames(strong)) text += ` Kekuatan utama tampak pada ${uniqueNames(strong)}.`;
+    if (uniqueNames(focus)) text += ` Area yang perlu diperkuat adalah ${uniqueNames(focus)}.`;
+    if (evidence) text += ` Catatan rubric utama: ${evidence}`;
+    return text;
+  };
+
+  const buildExcelRows = useCallback(() => (
+    allCalculatedData.map((student, index) => {
+      const scoreValue = Number(student.score);
+      return {
+        no: index + 1,
+        className: selectedClass,
+        nis: student.nis || student.id || "-",
+        name: student.name || "-",
+        subject: currentSubject?.label || selectedSubject,
+        subTopic: currentTopicLabel,
+        score: Number.isFinite(scoreValue) ? Number(scoreValue.toFixed(2)) : "-",
+        predikat: getPerformanceDisplay(student).label,
+        progress: student.progress || "-",
+        thinking: getCategoryExportValue(student, "Thinking Skills"),
+        research: getCategoryExportValue(student, "Research Skills"),
+        communication: getCategoryExportValue(student, "Communication Skills"),
+        social: getCategoryExportValue(student, "Social Skills"),
+        selfManagement: getCategoryExportValue(student, "Self-Management Skills"),
+      };
+    })
+  ), [allCalculatedData, selectedClass, currentSubject, selectedSubject, currentTopicLabel]);
+
+  const excelFilename = useMemo(() => (
+    `ATL_Report_${safeFilePart(selectedClass)}_${safeFilePart(currentSubject?.label || selectedSubject)}_${safeFilePart(currentTopicLabel)}.xlsx`
+  ), [selectedClass, currentSubject, selectedSubject, currentTopicLabel]);
+
+  const excelPayload = useMemo(() => ({
+    meta: {
+      className: selectedClass,
+      subject: currentSubject?.label || selectedSubject,
+      subTopic: currentTopicLabel,
+      rowCount: excelPreviewRows.length,
+      generatedAt: new Date().toLocaleString("id-ID"),
+      filename: excelFilename,
+    },
+    columns: exportColumns,
+    rows: excelPreviewRows,
+  }), [selectedClass, currentSubject, selectedSubject, currentTopicLabel, excelFilename, excelPreviewRows]);
+
+  const handleOpenExcelPreview = () => {
+    setExcelPreviewRows(buildExcelRows());
+    setShowExcelPreview(true);
+  };
+
+  const handleDownloadExcel = async () => {
+    if (excelPreviewRows.length === 0) return;
+    setExporting(true);
+    try {
+      const { blob, filename } = await exportReportExcel(excelPayload);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename || excelFilename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      alert("Export Excel gagal. Pastikan server backend sedang berjalan lalu coba lagi.");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
@@ -404,11 +538,20 @@ export default function Report() {
               </div>
 
               <div className="flex items-center gap-3">
-                <button className="inline-flex items-center gap-2 rounded-2xl border border-stone-200 bg-white px-6 py-3 text-sm font-semibold text-stone-700 transition-all hover:bg-stone-50 hover:border-primary/30 hover:shadow-md">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-stone-200 bg-white px-6 py-3 text-sm font-semibold text-stone-700 transition-all hover:bg-stone-50 hover:border-primary/30 hover:shadow-md"
+                >
                   <span className="material-symbols-outlined text-[18px]">print</span>
                   Cetak Laporan
                 </button>
-                <button className="inline-flex items-center gap-2 rounded-2xl bg-yellow-400 px-6 py-3 text-sm font-bold text-stone-900 transition-all hover:bg-yellow-500 hover:shadow-lg">
+                <button
+                  type="button"
+                  onClick={handleOpenExcelPreview}
+                  disabled={calculatedReports.length === 0}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-yellow-400 px-6 py-3 text-sm font-bold text-stone-900 transition-all hover:bg-yellow-500 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+                >
                   <span className="material-symbols-outlined text-[18px]">download</span>
                   Export Excel
                 </button>
@@ -638,13 +781,8 @@ export default function Report() {
                         </td>
                         <td className="px-5 py-4 text-sm font-bold text-stone-900">{s.score}</td>
                         <td className="px-5 py-4 text-sm font-semibold text-stone-900">
-                          <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${
-                            s.predikat === "Sangat Baik" ? "bg-emerald-100 text-emerald-700" :
-                            s.predikat === "Baik" ? "bg-yellow-100 text-yellow-700" :
-                            s.predikat === "-" ? "bg-slate-100 text-slate-600" :
-                            "bg-orange-100 text-orange-700"
-                          }`}>
-                            {s.predikat}
+                          <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${getPerformanceDisplay(s).className}`}>
+                            {getPerformanceDisplay(s).label}
                           </span>
                         </td>
                         <td className="px-5 py-4 text-sm font-semibold text-stone-900">
@@ -691,112 +829,272 @@ export default function Report() {
           </div>
         </div>
 
-        {selectedDetailStudent && (
+        {showExcelPreview && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-            <div className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-[2rem] border border-amber-300/20 bg-[#0b0907] shadow-[0_26px_60px_rgba(0,0,0,0.5)]">
-              <div className="flex items-start justify-between gap-4 border-b border-amber-300/15 bg-gradient-to-r from-[#080706] via-[#15110c] to-[#090806] px-6 py-5">
+            <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-yellow-200 bg-white shadow-[0_26px_70px_rgba(15,23,42,0.28)]">
+              <div className="flex flex-col gap-4 border-b border-stone-200 bg-gradient-to-r from-yellow-50 via-white to-amber-50 px-6 py-5 md:flex-row md:items-start md:justify-between">
                 <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-300/80">Student Detail Report</p>
-                  <h3 className="mt-1 text-xl font-black text-white">{selectedDetailStudent.name}</h3>
-                  <p className="mt-1 text-xs font-medium text-amber-100/70">
-                    {selectedClass} | {currentSubject?.label} | Sub-topic {currentTopicIndex} ({currentTopicLabel})
+                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-yellow-600">Excel Preview</p>
+                  <h3 className="mt-1 text-2xl font-black text-stone-950">ATL Score List</h3>
+                  <p className="mt-1 text-sm font-medium text-stone-600">
+                    {selectedClass} | {currentSubject?.label || selectedSubject} | {currentTopicLabel}
+                  </p>
+                  <p className="mt-2 text-xs font-semibold text-stone-500">
+                    {excelPreviewRows.length} siswa hasil filter akan diexport ke file <span className="font-black text-stone-800">{excelFilename}</span>.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedDetailStudent(null)}
-                  className="rounded-full border border-amber-300/30 bg-amber-300/10 p-2 text-amber-200 transition-colors hover:bg-amber-300/20"
-                >
-                  <span className="material-symbols-outlined text-[18px]">close</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowExcelPreview(false)}
+                    disabled={exporting}
+                    className="inline-flex items-center justify-center rounded-2xl border border-stone-200 bg-white px-5 py-3 text-sm font-bold text-stone-700 transition-all hover:bg-stone-50 disabled:opacity-60"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadExcel}
+                    disabled={exporting || excelPreviewRows.length === 0}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-yellow-400 px-5 py-3 text-sm font-black text-stone-950 shadow-[0_12px_24px_rgba(245,158,11,0.28)] transition-all hover:bg-yellow-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">{exporting ? "hourglass_top" : "download"}</span>
+                    {exporting ? "Membuat File..." : "Download XLSX"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowExcelPreview(false)}
+                    disabled={exporting}
+                    className="rounded-full border border-stone-200 bg-white p-3 text-stone-600 transition-all hover:bg-stone-50 disabled:opacity-60"
+                    aria-label="Close Excel preview"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">close</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="max-h-[calc(90vh-110px)] space-y-5 overflow-y-auto px-6 py-6">
-                <section className="relative overflow-hidden rounded-3xl border border-amber-300/20 bg-gradient-to-br from-[#060504] via-[#17120c] to-[#0e0b08] p-0 shadow-[0_14px_28px_rgba(0,0,0,0.35)]">
-                  <div className="pointer-events-none absolute -right-16 -top-14 h-56 w-56 rounded-full bg-amber-300/20 blur-3xl" />
-                  <div className="pointer-events-none absolute -left-14 bottom-6 h-40 w-40 rounded-full bg-amber-200/10 blur-2xl" />
-                  <div className="pointer-events-none absolute right-10 top-8 h-24 w-24 rounded-full border border-amber-300/30" />
-                  <div className="pointer-events-none absolute right-16 top-14 h-12 w-12 rounded-full border border-amber-200/30" />
-                  <div className="pointer-events-none absolute inset-x-0 top-24 h-px bg-gradient-to-r from-transparent via-amber-300/45 to-transparent" />
-                  <div className="pointer-events-none absolute bottom-7 right-8 flex items-center gap-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-200/80" />
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-300/60" />
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-100/60" />
+              <div className="border-b border-yellow-100 bg-yellow-50/70 px-6 py-3">
+                <div className="grid gap-3 text-xs font-semibold text-stone-700 md:grid-cols-5">
+                  <div className="rounded-xl bg-white/80 px-3 py-2 ring-1 ring-yellow-200">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-yellow-700">Kelas</p>
+                    <p className="mt-1 text-stone-950">{selectedClass}</p>
                   </div>
-                  <div className="absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-2xl border border-amber-300/30 bg-[#12100c]/95 px-3 py-2 shadow-[0_20px_30px_rgba(0,0,0,0.35)] backdrop-blur-sm">
-                    <img src={schoolLogo} alt="Cita Hati School Logo" className="h-10 w-auto object-contain" />
+                  <div className="rounded-xl bg-white/80 px-3 py-2 ring-1 ring-yellow-200">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-yellow-700">Mapel</p>
+                    <p className="mt-1 text-stone-950">{currentSubject?.label || selectedSubject}</p>
                   </div>
+                  <div className="rounded-xl bg-white/80 px-3 py-2 ring-1 ring-yellow-200">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-yellow-700">Subtopik</p>
+                    <p className="mt-1 text-stone-950">{currentTopicLabel}</p>
+                  </div>
+                  <div className="rounded-xl bg-white/80 px-3 py-2 ring-1 ring-yellow-200">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-yellow-700">Total Siswa</p>
+                    <p className="mt-1 text-stone-950">{excelPreviewRows.length}</p>
+                  </div>
+                  <div className="rounded-xl bg-white/80 px-3 py-2 ring-1 ring-yellow-200">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-yellow-700">Jam Export</p>
+                    <p className="mt-1 text-stone-950">{excelPayload.meta.generatedAt}</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-start gap-2 text-xs font-medium leading-6 text-stone-700">
+                  <span className="material-symbols-outlined mt-0.5 text-[17px] text-yellow-600">info</span>
+                  <span>
+                    Preview ini memakai payload yang sama dengan file Excel. Jika isi tabel di sini sudah benar, file XLSX akan mengikuti urutan kolom dan semua baris siswa hasil filter ini.
+                  </span>
+                </div>
+              </div>
 
-                  <div className="relative border-b border-amber-300/15 bg-gradient-to-r from-[#070605] via-[#1b140d] to-[#120e0a] px-6 pb-5 pt-16">
-                    <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 overflow-auto p-5">
+                <div className="min-w-[1180px] overflow-hidden rounded-2xl border border-stone-200 bg-white">
+                  <table className="w-full border-collapse text-left">
+                    <thead>
+                      <tr className="bg-yellow-400">
+                        {exportColumns.map((column) => (
+                          <th key={column.key} className="border border-yellow-500/50 px-3 py-3 text-[11px] font-black uppercase tracking-wider text-stone-950">
+                            {column.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {excelPreviewRows.map((row) => (
+                        <tr key={`${row.no}-${row.nis}`} className="odd:bg-white even:bg-stone-50">
+                          {exportColumns.map((column) => (
+                            <td key={column.key} className="border border-stone-200 px-3 py-3 text-xs font-semibold text-stone-700">
+                              {row[column.key]}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                      {excelPreviewRows.length === 0 && (
+                        <tr>
+                          <td colSpan={exportColumns.length} className="px-4 py-10 text-center text-sm font-semibold text-stone-500">
+                            Tidak ada data visible table untuk diexport.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {selectedDetailStudent && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
+            <div className="max-h-[94vh] w-full max-w-5xl overflow-hidden rounded-[2rem] border border-stone-200 bg-white shadow-[0_28px_80px_rgba(15,23,42,0.24)]">
+              <div className="max-h-[94vh] overflow-y-auto p-6 lg:p-10">
+                <div className="flex items-start justify-between gap-4">
+                  <p className="text-[12px] font-black uppercase tracking-[0.28em] text-yellow-600">Student ATL Report</p>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDetailStudent(null)}
+                    className="rounded-2xl border border-stone-200 bg-white p-3 text-stone-700 shadow-sm transition-all hover:bg-stone-50 hover:shadow-md"
+                  >
+                    <span className="material-symbols-outlined text-[24px]">close</span>
+                  </button>
+                </div>
+
+                <section className="mt-7 flex flex-col gap-6 md:flex-row md:items-center">
+                  <div className="flex h-32 w-32 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-yellow-100 via-orange-100 to-amber-200 text-4xl font-black text-stone-900 ring-4 ring-yellow-100">
+                    {selectedDetailStudent.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-3xl font-black leading-tight text-slate-950 lg:text-4xl">{selectedDetailStudent.name}</h3>
+                    <div className="mt-5 flex flex-wrap items-center gap-3 text-sm font-semibold text-slate-500">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[20px]">school</span>
+                        {selectedClass}
+                      </span>
+                      <span className="text-yellow-500">|</span>
+                      <span className="inline-flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[20px]">music_note</span>
+                        {currentSubject?.label || selectedSubject}
+                      </span>
+                      <span className="text-yellow-500">|</span>
+                      <span className="inline-flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[20px]">auto_stories</span>
+                        {currentTopicLabel}
+                      </span>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="mt-8 grid overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm md:grid-cols-3">
+                  {[
+                    ["groups", "Class", selectedClass],
+                    ["badge", "Student ID (NIS)", selectedDetailStudent.nis || selectedDetailStudent.id || "-"],
+                    ["calendar_month", "Assessment Date", reportGeneratedDate],
+                  ].map(([icon, label, value], index) => (
+                    <div key={label} className={`flex items-center gap-4 px-6 py-5 ${index < 2 ? "border-b border-stone-200 md:border-b-0 md:border-r" : ""}`}>
+                      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-yellow-50 text-yellow-700 ring-1 ring-yellow-200">
+                        <span className="material-symbols-outlined text-[28px]">{icon}</span>
+                      </span>
                       <div>
-                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-200/85">Student ATL Report</p>
-                        <h4 className="mt-2 text-xl font-black text-white">{selectedDetailStudent.name}</h4>
-                        <p className="mt-1 text-xs font-medium text-amber-100/70">
-                          {currentSubject?.label} | Sub-topic {currentTopicIndex} ({currentTopicLabel})
+                        <p className="text-sm font-semibold text-slate-500">{label}</p>
+                        <p className="mt-1 text-lg font-black text-slate-950">{value}</p>
+                      </div>
+                    </div>
+                  ))}
+                </section>
+
+                <section className="mt-7 grid gap-5 lg:grid-cols-[1fr_280px]">
+                  <div className="rounded-2xl border border-yellow-200 bg-gradient-to-br from-yellow-50 via-white to-amber-50 p-6">
+                    <div className="flex gap-5">
+                      <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-yellow-100 text-yellow-700 ring-1 ring-yellow-200">
+                        <span className="material-symbols-outlined text-[34px]">lightbulb</span>
+                      </span>
+                      <div className="border-l-2 border-yellow-400 pl-6">
+                        <h4 className="text-lg font-black text-slate-950">Teacher Insight</h4>
+                        <p className="mt-4 text-sm font-medium leading-7 text-slate-800">
+                          {selectedDetailStudent.teacherInsight || selectedDetailStudent.summaryParagraph}
                         </p>
                       </div>
-                      <div className={`rounded-[1.4rem] border px-5 py-4 text-right shadow-[0_20px_30px_rgba(0,0,0,0.35)] ${selectedDetailSpotlight.panelClass}`}>
-                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-100/80">ATL Point</span>
-                        <div className={`mt-1 text-4xl font-black leading-none md:text-5xl ${selectedDetailSpotlight.scoreClass}`}>
-                          {selectedDetailSpotlight.score}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-center justify-center rounded-2xl border border-yellow-200 bg-white p-6 text-center">
+                    <p className="text-[11px] font-black uppercase tracking-[0.28em] text-yellow-600">ATL Level</p>
+                    <span className="mt-6 flex h-16 w-16 items-center justify-center rounded-full bg-yellow-400 text-white shadow-[0_18px_32px_rgba(245,158,11,0.25)]">
+                      <span className="material-symbols-outlined text-[34px]">star</span>
+                    </span>
+                    <p className="mt-6 text-2xl font-black uppercase tracking-wide text-slate-950">
+                      {selectedDetailStudent.atlLevel?.label || scoreLevel(selectedDetailStudent.score).label}
+                    </p>
+                    <span className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-black ${(selectedDetailStudent.atlLevel || scoreLevel(selectedDetailStudent.score)).className}`}>
+                      {Number(selectedDetailStudent.score || 0).toFixed(2)}
+                    </span>
+                    <p className="mt-3 text-sm leading-6 text-slate-700">
+                      {(selectedDetailStudent.atlLevel || scoreLevel(selectedDetailStudent.score)).description}
+                    </p>
+                  </div>
+                </section>
+
+                <section className="mt-7 overflow-hidden rounded-2xl border border-stone-200 bg-white">
+                  <div className="border-b border-stone-200 px-6 py-4">
+                    <h4 className="text-xl font-black text-slate-950">ATL Performance by Category</h4>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">
+                      Nilai numerik 5 jenis ATL dihitung dari indikator rubric dan skala fuzzy yang sudah dinilai.
+                    </p>
+                  </div>
+                  <div className="divide-y divide-stone-200">
+                    {(selectedDetailStudent.atlCategoryScores || buildATLCategoryScores(selectedDetailStudent.detailItems || [], selectedDetailStudent.catAverages || {})).map((category) => {
+                      const meta = getATLCategoryMeta(category.name);
+                      return (
+                        <div key={category.name} className="grid gap-4 px-6 py-5 md:grid-cols-[1fr_160px_120px] md:items-center">
+                          <div className="flex items-center gap-4">
+                            <span className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full ring-1 ${meta.toneClass}`}>
+                              <span className="material-symbols-outlined text-[30px]">{meta.icon}</span>
+                            </span>
+                            <div>
+                              <p className="text-lg font-black text-slate-950">{category.name}</p>
+                              <p className="mt-1 text-sm leading-6 text-slate-600">
+                                {category.assessedIndicators > 0
+                                  ? `Nilai ${Number(category.score || 0).toFixed(1)} diambil dari rata-rata ${category.assessedIndicators} indikator softskill ATL dalam subtopik ${currentTopicLabel}.`
+                                  : `Belum ada indikator ${category.name} yang dinilai pada subtopik ${currentTopicLabel}.`}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-left md:text-center">
+                            <p className="text-[11px] font-black uppercase tracking-wider text-stone-400">Numeric Score</p>
+                            <p className="mt-1 text-3xl font-black text-slate-950">{Number(category.score || 0).toFixed(1)}</p>
+                          </div>
+                          <div className="md:text-right">
+                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${category.level?.className || scoreLevel(category.score).className}`}>
+                              {category.level?.label || scoreLevel(category.score).label}
+                            </span>
+                          </div>
                         </div>
-                        <span className={`mt-2 inline-flex rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${selectedDetailSpotlight.badgeClass}`}>
-                          {selectedDetailSpotlight.label}
-                        </span>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="mt-7">
+                  <h4 className="text-xl font-black text-slate-950">Teacher Signature</h4>
+                  <div className="mt-4 grid overflow-hidden rounded-2xl border border-stone-200 bg-white md:grid-cols-[1fr_1fr]">
+                    <div className="flex items-center gap-4 border-b border-stone-200 px-6 py-5 md:border-b-0 md:border-r">
+                      <span className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-yellow-100 to-orange-200 text-lg font-black text-stone-900">JW</span>
+                      <div>
+                        <p className="text-lg font-black text-slate-950">Mrs. Joko Wiryanto</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-500">{currentSubject?.label || selectedSubject} Teacher</p>
                       </div>
                     </div>
-                  </div>
-
-                  <div className="grid gap-0 border-b border-amber-300/15 md:grid-cols-2">
-                    <div className="space-y-1 border-b border-amber-300/15 px-6 py-4 md:border-b-0 md:border-r">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-200/70">Student Name</p>
-                      <p className="text-sm font-semibold text-white">{selectedDetailStudent.name}</p>
-                    </div>
-                    <div className="space-y-1 px-6 py-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-200/70">Student ID (NIS)</p>
-                      <p className="text-sm font-semibold text-white">{selectedDetailStudent.nis}</p>
-                    </div>
-                    <div className="space-y-1 border-b border-amber-300/15 px-6 py-4 md:border-b-0 md:border-r">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-200/70">Class</p>
-                      <p className="text-sm font-semibold text-white">{selectedClass}</p>
-                    </div>
-                    <div className="space-y-1 px-6 py-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-200/70">Report Date</p>
-                      <p className="text-sm font-semibold text-white">{reportGeneratedDate}</p>
-                    </div>
-                  </div>
-
-                  <div className="px-6 py-5">
-                    <div className="rounded-2xl border border-amber-300/25 bg-amber-300/10 p-4">
-                      <p className="text-sm leading-7 text-amber-100">{selectedDetailStudent.summaryParagraph}</p>
+                    <div className="flex flex-col items-center justify-center px-6 py-5">
+                      <p className="font-serif text-4xl text-yellow-600">Joko</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-500">{reportGeneratedDate}</p>
                     </div>
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-amber-300/20 bg-[#0e0c09]">
-                  <div className="border-b border-amber-300/15 px-4 py-3">
-                    <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-300/80">Criterion-Based Narrative</p>
+                <div className="mt-6 rounded-2xl border border-yellow-200 bg-yellow-50 px-6 py-4">
+                  <div className="flex gap-4">
+                    <span className="material-symbols-outlined text-[30px] text-yellow-700">info</span>
+                    <p className="text-sm font-medium leading-7 text-slate-700">
+                      Laporan ini dihasilkan otomatis oleh ATL Assessment System berbasis Fuzzy-AHP dan menggunakan data penilaian rubric yang tersimpan pada sistem.
+                    </p>
                   </div>
-                  <div className="space-y-4 px-4 py-4">
-                    {selectedDetailStudent.detailItems.length > 0 ? (
-                      selectedDetailStudent.detailItems.map((item, idx) => (
-                        <div key={`${item.kriteria}-${item.atlName}-${idx}`} className="rounded-xl border border-amber-300/20 bg-amber-300/5 p-4">
-                          <p className="text-sm leading-7 text-amber-50">
-                            <span className="font-black text-amber-300">{idx + 1}. </span>
-                            In the criterion <strong>{item.kriteria}</strong> under <strong>{item.atlName}</strong>,{" "}
-                            {selectedDetailStudent.name} is currently at level <strong>{item.ratingCode || "-"}</strong>{" "}
-                            ({item.ratingLabel}). {item.levelDescription}
-                          </p>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="py-4 text-center text-sm font-medium text-amber-100/80">
-                        No criterion data is available for this sub-topic.
-                      </p>
-                    )}
-                  </div>
-                </section>
+                </div>
               </div>
             </div>
           </div>

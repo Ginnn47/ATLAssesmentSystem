@@ -1,19 +1,145 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import Sidebar from "./sidebar";
 import { allStudentsData } from "./dummyStudents"; // Import data siswa
-import { dummyATL } from "./dummyATL";
-import { getClassAnalytics } from "./atlAnalytics";
+import { getClassAnalytics } from "../../services/atlApi";
+import { getATLCategoryMeta, getScoreLevel, getSubjectMeta, hydrateLabelRegistry, normalizeATLCategory } from "../../services/labelRegistry";
 
-const skillToneMap = {
-  Thinking: { text: "text-sky-600", bar: "from-sky-400 to-sky-600", dot: "bg-sky-500" },
-  Research: { text: "text-violet-600", bar: "from-violet-400 to-violet-600", dot: "bg-violet-500" },
-  Communication: { text: "text-fuchsia-600", bar: "from-fuchsia-400 to-fuchsia-600", dot: "bg-fuchsia-500" },
-  Social: { text: "text-lime-700", bar: "from-lime-400 to-lime-600", dot: "bg-lime-500" },
-  Collaboration: { text: "text-lime-700", bar: "from-lime-400 to-lime-600", dot: "bg-lime-500" },
-  "Self-management": { text: "text-red-600", bar: "from-red-400 to-red-600", dot: "bg-red-500" },
+const getSkillTone = (category) => {
+  const meta = getATLCategoryMeta(category);
+  return {
+    text: meta.textClass || "text-stone-600",
+    bar: meta.barClass || "from-stone-400 to-stone-600",
+    dot: meta.dotClass || "bg-stone-500",
+  };
 };
 
-const getSkillTone = (category) => skillToneMap[category] || { text: "text-stone-600", bar: "from-stone-400 to-stone-600", dot: "bg-stone-500" };
+const getSubjectTone = (subject = "") => getSubjectMeta(subject).chipClass || "text-violet-700 bg-violet-50 border-violet-200";
+
+const detailCategoryConfig = [
+  { label: "Thinking Skills", aliases: ["Thinking", "Thinking Skills"], icon: getATLCategoryMeta("Thinking Skills").icon },
+  { label: "Research Skills", aliases: ["Research", "Research Skills"], icon: getATLCategoryMeta("Research Skills").icon },
+  { label: "Communication Skills", aliases: ["Communication", "Communication Skills"], icon: getATLCategoryMeta("Communication Skills").icon },
+  { label: "Social Skills", aliases: ["Social", "Social Skills", "Collaboration"], icon: getATLCategoryMeta("Social Skills").icon },
+  { label: "Self-Management Skills", aliases: ["Self-management", "Self-Management", "Self-Management Skills"], icon: getATLCategoryMeta("Self-Management Skills").icon },
+];
+
+const ratingScoreMap = {
+  "Exceeding Expectation": 90,
+  "Meeting Expectation": 70,
+  "Developing Expectation": 50,
+  "Progressing Toward Expectation": 30,
+  "Need Further Improvement": 10,
+  "Need Improvement": 10,
+};
+
+const parsePercent = (value) => {
+  const parsed = Number(String(value ?? "").replace("%", ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const readLocalATLData = () => {
+  try {
+    return JSON.parse(localStorage.getItem("atl_framework_data") || "{}");
+  } catch (error) {
+    return {};
+  }
+};
+
+const buildATLDetailRows = (student) => {
+  const scores = student?.categoryScores || [];
+  const atlData = readLocalATLData();
+  const studentAssessments = atlData.savedAssessments?.[String(student?.id)] || {};
+  return detailCategoryConfig.map((config) => {
+    const matched = scores.find((item) => config.aliases.includes(item.category));
+    const strengthScore = config.aliases.includes(student?.strength) ? parsePercent(student?.strengthValue) : 0;
+    const focusScore = config.aliases.includes(student?.focus) ? parsePercent(student?.focusValue) : 0;
+    const score = matched?.score ?? (strengthScore || focusScore || 0);
+    const sources = [];
+    Object.entries(studentAssessments).forEach(([topicId, ratings]) => {
+      const criteria = atlData[topicId] || [];
+      Object.keys(ratings || {}).forEach((ratingKey) => {
+        const criterion = criteria.find((item) => ratingKey.includes(`_${item.kriteria}_`));
+        const subskill = (criterion?.atl || []).find((item) => ratingKey.endsWith(`_${item}`));
+        const category = normalizeATLCategory((criterion?.atlCategories || [])[0] || subskill);
+        if (!subskill || !config.aliases.includes(category)) return;
+        sources.push({
+          subskill,
+          criterion: criterion?.kriteria,
+          topic: topicId.replace(/_/g, " "),
+        });
+      });
+    });
+    const sourceText = sources.length
+      ? `Nilai ${score} diambil dari ${sources.length} indikator softskill, seperti ${sources.slice(0, 2).map((source) => `${source.subskill} pada subtopik ${source.topic}`).join(" dan ")}.`
+      : `Nilai ${score} diambil dari ringkasan softskill ${config.label} yang tersedia pada data siswa.`;
+    return {
+      ...config,
+      score: Number(score || 0),
+      sources,
+      sourceText,
+      tone: getSkillTone(config.label),
+    };
+  });
+};
+
+const buildTopicDetailRows = (student) => {
+  if (Array.isArray(student?.topicDetails) && student.topicDetails.length > 0) return student.topicDetails;
+  const atlData = readLocalATLData();
+  const studentAssessments = atlData.savedAssessments?.[String(student?.id)] || {};
+  return Object.entries(studentAssessments).map(([topicId, ratings]) => {
+    const values = Object.values(ratings || {}).map((label) => ratingScoreMap[label]).filter(Boolean);
+    const score = values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
+    return {
+      topicId,
+      subject: topicId.split("_")[0]?.toUpperCase() || "Subject",
+      topic: topicId.replace(/_/g, " "),
+      score,
+      assessedItems: values.length,
+      level: score > 0 ? getScoreLevel(score).label : "No Data",
+    };
+  });
+};
+
+const noDataLevel = {
+  label: "No Data",
+  color: "#a8a29e",
+  badgeClass: "bg-stone-100 text-stone-500",
+  count: 0,
+};
+
+const buildEmptyClassAnalytics = (className) => {
+  const students = (allStudentsData[className] || []).map((student) => ({
+    ...student,
+    assessedTopics: 0,
+    overallScore: null,
+    overall: "-",
+    level: noDataLevel,
+    strength: "-",
+    strengthValue: "-",
+    focus: "-",
+    focusValue: "-",
+    trendValue: "-",
+    categoryScores: [],
+  }));
+  return {
+    students,
+    assessedCount: 0,
+    totalStudents: students.length,
+    average: 0,
+    averageLevel: noDataLevel,
+    distribution: [
+      { key: "excellent", label: "Excellent", color: "#10b981", badgeClass: "bg-emerald-100 text-emerald-700", range: "85-100", count: 0 },
+      { key: "good", label: "Good", color: "#3b82f6", badgeClass: "bg-blue-100 text-blue-700", range: "70-84", count: 0 },
+      { key: "average", label: "Average", color: "#f59e0b", badgeClass: "bg-amber-100 text-amber-700", range: "50-69", count: 0 },
+      { key: "low", label: "Low", color: "#f97316", badgeClass: "bg-orange-100 text-orange-700", range: "30-49", count: 0 },
+      { key: "critical", label: "Critical", color: "#ef4444", badgeClass: "bg-red-100 text-red-700", range: "0-29", count: 0 },
+    ],
+    dominantCategory: noDataLevel,
+    categoryAverages: [],
+    topFocus: "-",
+    completion: 0,
+  };
+};
 
 export default function StudManage() {
   const currentUser = {
@@ -28,11 +154,16 @@ export default function StudManage() {
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
   const [dataVersion, setDataVersion] = useState(0);
+  const [classAnalytics, setClassAnalytics] = useState(() => buildEmptyClassAnalytics("3A - Primary"));
+  const [expandedStudentId, setExpandedStudentId] = useState(null);
+  const [detailTab, setDetailTab] = useState("atl");
+
+  useEffect(() => {
+    hydrateLabelRegistry().then(() => setDataVersion((version) => version + 1));
+  }, []);
 
   useEffect(() => {
     const syncData = () => {
-      const saved = localStorage.getItem("atl_framework_data");
-      if (saved) Object.assign(dummyATL, JSON.parse(saved));
       setDataVersion((version) => version + 1);
     };
     syncData();
@@ -50,8 +181,17 @@ export default function StudManage() {
     setCurrentPage(1);
   }, [selectedClassLabel]);
 
-  const rawStudents = allStudentsData[selectedClassLabel] || [];
-  const classAnalytics = useMemo(() => getClassAnalytics(rawStudents, dummyATL), [selectedClassLabel, dataVersion]);
+  useEffect(() => {
+    let cancelled = false;
+    getClassAnalytics(selectedClassLabel).then((data) => {
+      if (cancelled) return;
+      setClassAnalytics(data || buildEmptyClassAnalytics(selectedClassLabel));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClassLabel, dataVersion]);
+
   const students = classAnalytics.students;
   const averageOverall = classAnalytics.average;
   const averageLevel = classAnalytics.averageLevel;
@@ -236,49 +376,177 @@ export default function StudManage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-200 bg-white">
-                    {currentStudents.map((student, index) => (
-                      <tr key={student.id} className="group transition-colors hover:bg-primary/5">
-                        <td className="px-6 py-4 text-sm font-semibold text-stone-900">{String(startIndex + index + 1).padStart(2, "0")}</td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-4">
-                            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${student.avatarTone} text-xs font-bold text-stone-900 shadow-sm`}>
-                              {student.initials}
-                            </div>
-                            <div>
-                              <div className="text-sm font-semibold text-stone-900">{student.name}</div>
-                              <div className="text-xs text-stone-500">{student.nis}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-stone-900">
-                          <div className="flex items-center gap-2">
-                            <span>{student.overall}</span>
-                            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${student.overallScore === null ? "bg-stone-100 text-stone-500" : student.level.badgeClass}`}>
-                              {student.overallScore === null ? "No Data" : student.level.label}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-900">
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
-                            <div>{student.strength}</div>
-                          </div>
-                          <div className="text-xs text-stone-500">{student.strengthValue}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-600">
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex h-2.5 w-2.5 rounded-full bg-red-500"></span>
-                            {student.focus}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-emerald-600">{student.trendValue}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                          <button className="rounded-2xl bg-primary px-4 py-2 text-xs font-bold text-white shadow-md shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-secondary active:scale-95">
-                            Detail
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {currentStudents.map((student, index) => {
+                      const isExpanded = expandedStudentId === student.id;
+                      const atlRows = buildATLDetailRows(student);
+                      const topicRows = buildTopicDetailRows(student);
+                      return (
+                        <React.Fragment key={student.id}>
+                          <tr className={`group transition-colors ${isExpanded ? "bg-primary/5" : "hover:bg-primary/5"}`}>
+                            <td className="px-6 py-4 text-sm font-semibold text-stone-900">{String(startIndex + index + 1).padStart(2, "0")}</td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="flex items-center gap-4">
+                                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${student.avatarTone} text-xs font-bold text-stone-900 shadow-sm`}>
+                                  {student.initials}
+                                </div>
+                                <div>
+                                  <div className="text-sm font-semibold text-stone-900">{student.name}</div>
+                                  <div className="text-xs text-stone-500">{student.nis}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-stone-900">
+                              <div className="flex items-center gap-2">
+                                <span>{student.overall}</span>
+                                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${student.overallScore === null ? "bg-stone-100 text-stone-500" : student.level.badgeClass}`}>
+                                  {student.overallScore === null ? "No Data" : student.level.label}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-900">
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+                                <div>{student.strength}</div>
+                              </div>
+                              <div className="text-xs text-stone-500">{student.strengthValue}</div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-600">
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex h-2.5 w-2.5 rounded-full bg-red-500"></span>
+                                {student.focus}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-emerald-600">{student.trendValue}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setExpandedStudentId(isExpanded ? null : student.id);
+                                  setDetailTab("atl");
+                                }}
+                                className={`rounded-2xl px-4 py-2 text-xs font-bold shadow-md transition-all duration-300 hover:-translate-y-0.5 active:scale-95 ${
+                                  isExpanded
+                                    ? "bg-stone-900 text-white shadow-stone-900/15"
+                                    : "bg-primary text-white shadow-primary/20 hover:bg-secondary"
+                                }`}
+                              >
+                                {isExpanded ? "Tutup" : "Detail"}
+                              </button>
+                            </td>
+                          </tr>
+
+                          {isExpanded && (
+                            <tr className="bg-primary/5">
+                              <td colSpan={7} className="px-6 pb-6 pt-0">
+                                <div className="overflow-hidden rounded-[1.5rem] border border-primary/20 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
+                                  <div className="flex flex-col gap-4 border-b border-stone-200 bg-gradient-to-r from-amber-50 via-white to-stone-50 p-5 lg:flex-row lg:items-center lg:justify-between">
+                                    <div className="flex min-w-0 items-center gap-4">
+                                      <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${student.avatarTone} text-sm font-black text-stone-950 shadow-sm`}>
+                                        {student.initials}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="truncate text-lg font-black text-stone-950">{student.name}</p>
+                                        <p className="mt-1 text-xs font-semibold text-stone-500">{student.nis} - {selectedClassLabel}</p>
+                                      </div>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2 lg:min-w-[320px]">
+                                      <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-stone-200">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Overall</p>
+                                            <p className="mt-1 text-xl font-black text-stone-950">{student.overallScore ?? "-"}</p>
+                                      </div>
+                                      <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-stone-200">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Level</p>
+                                        <p className="mt-1 text-xs font-black text-stone-900">{student.level?.label || "No Data"}</p>
+                                      </div>
+                                      <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-stone-200">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Topik</p>
+                                        <p className="mt-1 text-xl font-black text-stone-950">{student.assessedTopics || topicRows.length || 0}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="p-5">
+                                    <div className="mb-5 inline-grid grid-cols-2 gap-1 rounded-2xl bg-stone-100 p-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => setDetailTab("atl")}
+                                        className={`rounded-xl px-5 py-2.5 text-xs font-black transition ${detailTab === "atl" ? "bg-primary text-white shadow-md shadow-primary/20" : "text-stone-500 hover:bg-white"}`}
+                                      >
+                                        Nilai 5 ATL
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setDetailTab("topic")}
+                                        className={`rounded-xl px-5 py-2.5 text-xs font-black transition ${detailTab === "topic" ? "bg-primary text-white shadow-md shadow-primary/20" : "text-stone-500 hover:bg-white"}`}
+                                      >
+                                        Mapel & Topik
+                                      </button>
+                                    </div>
+
+                                    {detailTab === "atl" ? (
+                                      <div className="grid gap-3 lg:grid-cols-5">
+                                        {atlRows.map((row) => (
+                                          <div key={row.label} className="rounded-2xl border-2 border-stone-200 bg-gradient-to-br from-white via-stone-50 to-stone-100 p-4 shadow-[0_14px_30px_rgba(15,23,42,0.08)] transition-all hover:-translate-y-1 hover:border-primary/35 hover:shadow-[0_18px_36px_rgba(234,179,8,0.16)]">
+                                            <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${row.tone.bar} text-white shadow-md`}>
+                                              <span className="material-symbols-outlined text-[20px]">{row.icon}</span>
+                                            </div>
+                                            <p className="min-h-[34px] text-xs font-black leading-4 text-stone-900">{row.label}</p>
+                                            <div className="mt-3 flex items-center justify-between">
+                                              <span className={`text-2xl font-black ${row.tone.text}`}>{row.score}</span>
+                                              <span className="text-[10px] font-black uppercase tracking-widest text-stone-400">Score</span>
+                                            </div>
+                                            <div className="mt-2 h-2 rounded-full bg-white">
+                                              <div className={`h-full rounded-full bg-gradient-to-r ${row.tone.bar}`} style={{ width: `${Math.min(row.score, 100)}%` }} />
+                                            </div>
+                                            <p className="mt-3 text-[11px] font-semibold leading-4 text-stone-500">
+                                              {row.sourceText}
+                                            </p>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div className="grid gap-3 lg:grid-cols-3">
+                                        {topicRows.length > 0 ? (
+                                          topicRows.map((row) => (
+                                            <div key={row.topicId} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                                              <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                  <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${getSubjectTone(row.subject)}`}>
+                                                    {row.subject}
+                                                  </span>
+                                                  <h4 className="mt-1 truncate text-sm font-black capitalize text-stone-950">{row.topic}</h4>
+                                                  <p className="mt-2 text-xs font-semibold text-stone-500">{row.assessedItems || 0} indikator ternilai</p>
+                                                </div>
+                                                <div className="text-right">
+                                                  <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Nilai</p>
+                                                  <p className="text-2xl font-black text-stone-950">{row.score ?? 0}</p>
+                                                  <span className="mt-1 inline-flex rounded-full bg-primary/10 px-2 py-1 text-[10px] font-black text-primary">
+                                                    {typeof row.level === "string" ? row.level : row.level?.label || "No Data"}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                              <div className="mt-4 h-2 rounded-full bg-white">
+                                                <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(Number(row.score || 0), 100)}%` }} />
+                                              </div>
+                                            </div>
+                                          ))
+                                        ) : (
+                                          <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-6 text-center lg:col-span-3">
+                                            <span className="material-symbols-outlined text-4xl text-stone-300">folder_off</span>
+                                            <p className="mt-3 text-sm font-bold text-stone-600">Belum ada detail topik tersimpan untuk siswa ini.</p>
+                                            <p className="mt-1 text-xs font-semibold text-stone-400">Input nilai dari detailed atau batch agar data per mapel/topik muncul di sini.</p>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

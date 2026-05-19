@@ -4,34 +4,8 @@ import Sidebar from "./sidebar";
 import { dummyATL, saveATLData } from "./dummyATL";
 import { allStudentsData } from "./dummyStudents";
 import { getStudents, hydrateTopic, saveAssessment } from "../../services/atlApi";
+import { getATLCategoryMeta, getRatingMeta, getScoreLevel, getSubjectMeta, hydrateLabelRegistry, ratingOptions } from "../../services/labelRegistry";
 import { getTopicsForSubjectLabel } from "../../services/topicCatalog";
-
-const ratingOptions = [
-  { label: "Need Further Improvement", code: "NFI" },
-  { label: "Progressing Toward Expectation", code: "PTE" },
-  { label: "Developing Expectation", code: "DE" },
-  { label: "Meeting Expectation", code: "ME" },
-  { label: "Exceeding Expectation", code: "EE" },
-];
-
-const levelTone = {
-  NFI: { card: "border-red-200 bg-red-50/40", icon: "bg-red-100 text-red-700", text: "text-red-700", active: "border-red-500 text-white shadow-xl shadow-red-200", activeIcon: "bg-transparent text-white", activeText: "text-white", activeBg: "#ef4444" },
-  PTE: { card: "border-orange-200 bg-orange-50/40", icon: "bg-orange-100 text-orange-700", text: "text-orange-700", active: "border-orange-500 text-white shadow-xl shadow-orange-200", activeIcon: "bg-transparent text-white", activeText: "text-white", activeBg: "#f97316" },
-  DE: { card: "border-amber-200 bg-amber-50/40", icon: "bg-amber-100 text-amber-700", text: "text-amber-700", active: "border-amber-500 text-white shadow-xl shadow-amber-200", activeIcon: "bg-transparent text-white", activeText: "text-white", activeBg: "#f59e0b" },
-  ME: { card: "border-blue-200 bg-blue-50/40", icon: "bg-blue-100 text-blue-700", text: "text-blue-700", active: "border-blue-600 text-white shadow-xl shadow-blue-200", activeIcon: "bg-transparent text-white", activeText: "text-white", activeBg: "#2563eb" },
-  EE: { card: "border-emerald-200 bg-emerald-50/40", icon: "bg-emerald-100 text-emerald-700", text: "text-emerald-700", active: "border-emerald-600 text-white shadow-xl shadow-emerald-200", activeIcon: "bg-transparent text-white", activeText: "text-white", activeBg: "#059669" },
-};
-
-const subjectIcon = { Singing: "music_note", IPA: "science", Math: "calculate" };
-const atlCategoryTone = {
-  "Thinking Skills": "border-sky-200 bg-sky-50 text-sky-700",
-  "Research Skills": "border-violet-200 bg-violet-50 text-violet-700",
-  "Communication Skills": "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700",
-  "Social Skills": "border-lime-200 bg-lime-50 text-lime-700",
-  "Self-Management Skills": "border-rose-200 bg-rose-50 text-rose-700",
-};
-
-const normalizeRatingLabel = (label) => (label === "Need Improvement" ? "Need Further Improvement" : label);
 
 const rubricScoreMap = {
   "Exceeding Expectation": 0.9,
@@ -39,16 +13,24 @@ const rubricScoreMap = {
   "Developing Expectation": 0.5,
   "Progressing Toward Expectation": 0.3,
   "Need Further Improvement": 0.1,
-  "Need Improvement": 0.1,
 };
 
-const getScoreCategory = (score) => {
-  const value = Number(score || 0);
-  if (value >= 85) return { label: "Excellent", className: "bg-emerald-100 text-emerald-700" };
-  if (value >= 70) return { label: "Good", className: "bg-blue-100 text-blue-700" };
-  if (value >= 50) return { label: "Average", className: "bg-amber-100 text-amber-700" };
-  if (value >= 30) return { label: "Low", className: "bg-orange-100 text-orange-700" };
-  return { label: "Critical", className: "bg-red-100 text-red-700" };
+const normalizeRatingLabel = (label) =>
+  label === "Need Improvement" ? "Need Further Improvement" : label;
+
+const getScoreCategory = getScoreLevel;
+
+const getLevelTone = (code) => {
+  const meta = getRatingMeta(code);
+  return {
+    card: meta.cellClass,
+    icon: meta.chipClass,
+    text: meta.textClass,
+    active: meta.buttonClass,
+    activeIcon: "bg-transparent text-white",
+    activeText: "text-white",
+    activeBg: meta.color,
+  };
 };
 
 const getCriterionWeight = (weights, criterionTitle, subskill) => {
@@ -80,6 +62,7 @@ export default function DetailedInputATL() {
   const weights = dummyATL.savedWeights?.[dataKey] || {};
 
   useEffect(() => {
+    hydrateLabelRegistry().then(() => setDataVersion((version) => version + 1));
     const syncData = () => {
       const saved = localStorage.getItem("atl_framework_data");
       if (saved) Object.assign(dummyATL, JSON.parse(saved));
@@ -298,7 +281,7 @@ export default function DetailedInputATL() {
                 <div className="flex items-start justify-between gap-5">
                   <div className="flex items-center gap-4">
                     <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-orange-50 text-orange-700">
-                      <span className="material-symbols-outlined text-3xl">{subjectIcon[selectedSubject] || "groups"}</span>
+                      <span className="material-symbols-outlined text-3xl">{getSubjectMeta(selectedSubject).icon || "groups"}</span>
                     </div>
                     <div>
                       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-primary">Kriteria yang Dinilai</p>
@@ -310,7 +293,7 @@ export default function DetailedInputATL() {
                     <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Subskill Kontekstual</p>
                     <div className="mt-2 flex max-w-xl flex-wrap justify-end gap-2">
                       {(criterion.atlCategories || []).map((cat) => (
-                        <span key={cat} className={`rounded-lg border px-3 py-2 text-xs font-black ${atlCategoryTone[cat] || "border-stone-200 bg-stone-50 text-stone-700"}`}>
+                        <span key={cat} className={`rounded-lg border px-3 py-2 text-xs font-black ${getATLCategoryMeta(cat).chipClass || "border-stone-200 bg-stone-50 text-stone-700"}`}>
                           {cat}
                         </span>
                       ))}
@@ -341,7 +324,7 @@ export default function DetailedInputATL() {
 
                 <div className="mt-8 grid gap-4 lg:grid-cols-5">
                   {ratingOptions.map((option) => {
-                    const tone = levelTone[option.code];
+                    const tone = getLevelTone(option.code);
                     const active = criterionRating === option.label;
                     const weight = dominantWeight * rubricScoreMap[option.label];
                     return (

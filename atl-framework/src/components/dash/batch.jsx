@@ -4,67 +4,18 @@ import Sidebar from "./sidebar";
 import { allStudentsData } from "./dummyStudents";
 import { dummyATL, saveATLData } from "./dummyATL";
 import { getStudents, hydrateTopic, saveAssessment } from "../../services/atlApi";
+import { getRatingMeta, getScoreLevel, hydrateLabelRegistry, ratingOptions } from "../../services/labelRegistry";
 import { getSubjectTopicMapByLabel } from "../../services/topicCatalog";
 
-const ratingOptions = [
-  { label: "Need Further Improvement", code: "NFI" },
-  { label: "Progressing Toward Expectation", code: "PTE" },
-  { label: "Developing Expectation", code: "DE" },
-  { label: "Meeting Expectation", code: "ME" },
-  { label: "Exceeding Expectation", code: "EE" },
-];
-
-const levelStyleMap = {
-  NFI: {
-    chip: "border-red-200 bg-red-50 text-red-700",
-    text: "text-red-700",
-    cell: "border-red-100 bg-red-50/50",
-    button: "border-red-500 bg-red-500 text-white shadow-red-200",
-    idleButton: "border-red-100 bg-red-50/50 text-red-700 hover:border-red-300",
-  },
-  PTE: {
-    chip: "border-orange-200 bg-orange-50 text-orange-700",
-    text: "text-orange-700",
-    cell: "border-orange-100 bg-orange-50/50",
-    button: "border-orange-500 bg-orange-500 text-white shadow-orange-200",
-    idleButton: "border-orange-100 bg-orange-50/50 text-orange-700 hover:border-orange-300",
-  },
-  DE: {
-    chip: "border-amber-200 bg-amber-50 text-amber-700",
-    text: "text-amber-700",
-    cell: "border-amber-100 bg-amber-50/50",
-    button: "border-amber-500 bg-amber-500 text-white shadow-amber-200",
-    idleButton: "border-amber-100 bg-amber-50/50 text-amber-700 hover:border-amber-300",
-  },
-  ME: {
-    chip: "border-blue-200 bg-blue-50 text-blue-700",
-    text: "text-blue-700",
-    cell: "border-blue-100 bg-blue-50/50",
-    button: "border-blue-600 bg-blue-600 text-white shadow-blue-200",
-    idleButton: "border-blue-100 bg-blue-50/50 text-blue-700 hover:border-blue-300",
-  },
-  EE: {
-    chip: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    text: "text-emerald-700",
-    cell: "border-emerald-100 bg-emerald-50/50",
-    button: "border-emerald-600 bg-emerald-600 text-white shadow-emerald-200",
-    idleButton: "border-emerald-100 bg-emerald-50/50 text-emerald-700 hover:border-emerald-300",
-  },
-  NONE: {
-    chip: "border-stone-200 bg-stone-100 text-stone-600",
-    text: "text-stone-600",
-    cell: "border-stone-200 bg-white",
-    button: "border-stone-200 bg-white text-stone-500",
-    idleButton: "border-stone-200 bg-white text-stone-500 hover:border-primary/30 hover:bg-primary/5",
-  },
-};
-
-const atlConfig = {
-  "Thinking Skills": { icon: "psychology", color: "border-sky-200 bg-sky-50 text-sky-700" },
-  "Research Skills": { icon: "explore", color: "border-violet-200 bg-violet-50 text-violet-700" },
-  "Communication Skills": { icon: "chat", color: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700" },
-  "Social Skills": { icon: "group", color: "border-lime-200 bg-lime-50 text-lime-700" },
-  "Self-Management Skills": { icon: "self_improvement", color: "border-rose-200 bg-rose-50 text-rose-700" },
+const getLevelStyle = (code) => {
+  const meta = getRatingMeta(code);
+  return {
+    chip: meta.chipClass,
+    text: meta.textClass,
+    cell: meta.cellClass,
+    button: meta.buttonClass,
+    idleButton: meta.idleButtonClass,
+  };
 };
 
 const normalizeRatingLabel = (label) =>
@@ -79,14 +30,7 @@ const ratingValueMap = {
   "Need Improvement": 0.1,
 };
 
-const getScoreCategory = (score) => {
-  const value = Number(score || 0);
-  if (value >= 85) return { label: "Excellent", className: "bg-emerald-100 text-emerald-700" };
-  if (value >= 70) return { label: "Good", className: "bg-blue-100 text-blue-700" };
-  if (value >= 50) return { label: "Average", className: "bg-amber-100 text-amber-700" };
-  if (value >= 30) return { label: "Low", className: "bg-orange-100 text-orange-700" };
-  return { label: "Critical", className: "bg-red-100 text-red-700" };
-};
+const getScoreCategory = getScoreLevel;
 
 export default function BatchInputATL() {
   const currentUser = { name: "Joko Wiryanto", role: "Guru / Evaluator" };
@@ -103,6 +47,10 @@ export default function BatchInputATL() {
   const [subjectTopicMap, setSubjectTopicMap] = useState(getSubjectTopicMapByLabel);
   const [filtersHydrated, setFiltersHydrated] = useState(false);
   const skipNextSubjectResetRef = React.useRef(false);
+
+  useEffect(() => {
+    hydrateLabelRegistry().then(() => setDataVersion((version) => version + 1));
+  }, []);
 
   const topicOptions = useMemo(() => subjectTopicMap[selectedSubject] || [], [selectedSubject, subjectTopicMap]);
   const selectedTopic = topicOptions[selectedTopicIndex] || { id: "", label: "Pilih Topik" };
@@ -379,7 +327,7 @@ export default function BatchInputATL() {
   const detailContext = matrixContext || (students[0] && columns[0] ? { student: students[0], column: columns[0] } : null);
   const detailValue = detailContext ? batchRatingsByStudent[detailContext.student.id]?.[detailContext.column.id] || "" : "";
   const detailOption = ratingOptions.find((item) => item.label === detailValue);
-  const detailTone = levelStyleMap[detailOption?.code || "NONE"];
+  const detailTone = getLevelStyle(detailOption?.code || "NONE");
   const detailStudentScore = detailContext ? batchStudentScores[detailContext.student.id] : null;
   const detailStudentCategory = getScoreCategory(detailStudentScore);
   const detailWeight = detailContext
@@ -587,7 +535,7 @@ export default function BatchInputATL() {
                               const value = batchRatingsByStudent[student.id]?.[column.id] || "";
                               const activeOption = ratingOptions.find((item) => item.label === value);
                               const activeCode = activeOption?.code || "NONE";
-                              const tone = levelStyleMap[activeCode] || levelStyleMap.NONE;
+                              const tone = getLevelStyle(activeCode || "NONE");
                               const isMatrixOpen =
                                 matrixContext?.student?.id === student.id &&
                                 matrixContext?.column?.id === column.id;
@@ -602,7 +550,7 @@ export default function BatchInputATL() {
                                     <div className="grid grid-cols-5 gap-2">
                                       {ratingOptions.map((option) => {
                                         const selected = value === option.label;
-                                        const optionTone = levelStyleMap[option.code];
+                                        const optionTone = getLevelStyle(option.code);
 
                                         return (
                                           <button
@@ -716,7 +664,7 @@ export default function BatchInputATL() {
                       <p className="mb-3 text-[11px] font-black uppercase tracking-[0.14em] text-stone-500">Semua Level</p>
                       <div className="space-y-3">
                         {ratingOptions.map((option) => {
-                          const optionTone = levelStyleMap[option.code];
+                          const optionTone = getLevelStyle(option.code);
                           const selected = detailValue === option.label;
                           return (
                             <button
@@ -830,7 +778,7 @@ export default function BatchInputATL() {
 
                   <div className="space-y-3 p-6">
                     {ratingOptions.map((option) => {
-                      const optionTone = levelStyleMap[option.code];
+                      const optionTone = getLevelStyle(option.code);
                       const selected = value === option.label;
 
                       return (
