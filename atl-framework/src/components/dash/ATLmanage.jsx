@@ -2,61 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "./sidebar";
 import criteriamanagement from "./criteriamanagement";
 import ExpertManagement from "./expertmanagement";
-import { dummyATL } from "./dummyATL";
+import { dummyATL } from "../dummyData/dummyATL";
 import { hydrateTopic } from "../../services/atlApi";
 import { getATLCategoryMeta, getSubskillMeta } from "../../services/labelRegistry";
-
-const subskillATLMap = {
-  "Critical Thingking": "Thinking Skills",
-  "Creative Thingking": "Thinking Skills",
-  "InformationTransfer": "Thinking Skills",
-  "Reflection / Metacognitive": "Thinking Skills",
-  "Textual Literacy": "Research Skills",
-  "Media Literacy": "Research Skills",
-  "Ethical use of information": "Research Skills",
-  "Exchanging-information": "Communication Skills",
-  "Literacy skills": "Communication Skills",
-  "ICT skills": "Communication Skills",
-  "Interpersonal relationships": "Collaboration",
-  "Social-emotional intelligence": "Social-emotional",
-  "Organization skills": "Self-management",
-  "State of Mind": "Self-management",
-};
-
-const atlTone = {
-  "Thinking Skills": {
-    chip: "border-sky-200 bg-sky-50 text-sky-700",
-    dot: "#0284c7",
-  },
-  "Research Skills": {
-    chip: "border-violet-200 bg-violet-50 text-violet-700",
-    dot: "#7c3aed",
-  },
-  "Communication Skills": {
-    chip: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700",
-    dot: "#c026d3",
-  },
-  "Social Skills": {
-    chip: "border-lime-200 bg-lime-50 text-lime-700",
-    dot: "#65a30d",
-  },
-  Collaboration: {
-    chip: "border-lime-200 bg-lime-50 text-lime-700",
-    dot: "#65a30d",
-  },
-  "Social-emotional": {
-    chip: "border-lime-200 bg-lime-50 text-lime-700",
-    dot: "#65a30d",
-  },
-  "Self-management": {
-    chip: "border-rose-200 bg-rose-50 text-rose-700",
-    dot: "#be123c",
-  },
-  "Self-Management Skills": {
-    chip: "border-rose-200 bg-rose-50 text-rose-700",
-    dot: "#be123c",
-  },
-};
 
 const getATLStyle = (atl) => {
   const meta = getATLCategoryMeta(atl);
@@ -66,86 +14,17 @@ const getATLStyle = (atl) => {
   };
 };
 
-const subskillTone = {
-  "Critical Thingking": {
-    chip: "border-[#00E5E5] bg-[#00E5E5]/10 text-[#008C8C]",
-    dot: "#00E5E5",
-    bar: "bg-[#00E5E5]",
-  },
-  "Creative Thingking": {
-    chip: "border-[#0B0787] bg-[#0B0787]/10 text-[#0B0787]",
-    dot: "#0B0787",
-    bar: "bg-[#0B0787]",
-  },
-  InformationTransfer: {
-    chip: "border-[#1100FF] bg-[#1100FF]/10 text-[#1100FF]",
-    dot: "#1100FF",
-    bar: "bg-[#1100FF]",
-  },
-  "Reflection / Metacognitive": {
-    chip: "border-[#4B8DBB] bg-[#4B8DBB]/10 text-[#2F6F9F]",
-    dot: "#4B8DBB",
-    bar: "bg-[#4B8DBB]",
-  },
-  "Textual Literacy": {
-    chip: "border-red-300 bg-red-100 text-red-800",
-    dot: "#DC2626",
-    bar: "bg-red-500",
-  },
-  "Media Literacy": {
-    chip: "border-red-300 bg-red-100 text-red-800",
-    dot: "#EF4444",
-    bar: "bg-red-500",
-  },
-  "Ethical use of information": {
-    chip: "border-red-300 bg-red-100 text-red-800",
-    dot: "#B91C1C",
-    bar: "bg-red-700",
-  },
-  "Exchanging-information": {
-    chip: "border-purple-300 bg-purple-100 text-purple-800",
-    dot: "#7C3AED",
-    bar: "bg-purple-500",
-  },
-  "Literacy skills": {
-    chip: "border-purple-300 bg-purple-100 text-purple-800",
-    dot: "#8B5CF6",
-    bar: "bg-purple-500",
-  },
-  "ICT skills": {
-    chip: "border-purple-300 bg-purple-100 text-purple-800",
-    dot: "#6D28D9",
-    bar: "bg-purple-700",
-  },
-  "Interpersonal relationships": {
-    chip: "border-lime-300 bg-lime-100 text-lime-800",
-    dot: "#65a30d",
-    bar: "bg-lime-500",
-  },
-  "Social-emotional intelligence": {
-    chip: "border-green-300 bg-green-100 text-green-800",
-    dot: "#16a34a",
-    bar: "bg-green-500",
-  },
-  "Organization skills": {
-    chip: "border-orange-300 bg-orange-100 text-orange-800",
-    dot: "#EA580C",
-    bar: "bg-orange-600",
-  },
-  "State of Mind": {
-    chip: "border-orange-300 bg-orange-100 text-orange-800",
-    dot: "#F97316",
-    bar: "bg-orange-500",
-  },
-};
-
 const getSubskillStyle = (subskill, atl) => {
   const meta = getSubskillMeta(subskill);
   const fallback = getATLStyle(atl);
   return {
     chip: meta.chipClass || fallback.chip,
+    chipStyle: meta.chipStyle,
+    solidStyle: meta.solidStyle,
+    softStyle: meta.softStyle,
     dot: meta.colorHex || meta.color || fallback.dot,
     bar: meta.bar || (meta.barClass ? `bg-gradient-to-r ${meta.barClass}` : "bg-primary"),
+    barColor: meta.colorHex || meta.color || fallback.dot,
   };
 };
 
@@ -211,7 +90,7 @@ export default function ATLmanage() {
         return {
           subskill,
           weight,
-          atl: subskillATLMap[subskill] || item.atlCategories?.[0] || "ATL",
+          atl: getSubskillMeta(subskill).categoryName || item.atlCategories?.[0] || "ATL",
         };
       });
       const rankedRows = subskillRows.slice().sort((a, b) => b.weight - a.weight);
@@ -424,7 +303,12 @@ export default function ATLmanage() {
                                 </div>
                               </td>
                               <td className="px-4 py-3">
-                                <span className={`inline-flex rounded-lg border px-3 py-1 text-xs font-black ${style.chip}`}>{row.dominant.subskill}</span>
+                                <span
+                                  className={`inline-flex rounded-lg border px-3 py-1 text-xs font-black ${style.chip}`}
+                                  style={style.chipStyle}
+                                >
+                                  {row.dominant.subskill}
+                                </span>
                               </td>
                               <td className="px-4 py-3 text-center">
                                 <span className="inline-flex min-w-[58px] justify-center rounded-lg bg-primary/10 px-3 py-1 text-base font-black text-primary">
@@ -434,7 +318,7 @@ export default function ATLmanage() {
                               <td className="px-4 py-3">
                                 <div className="flex items-center gap-3">
                                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
-                                    <div className={`h-full rounded-full ${style.bar}`} style={{ width: `${Math.min(row.dominant.weight * 100, 100)}%` }} />
+                                    <div className="h-full rounded-full" style={{ width: `${Math.min(row.dominant.weight * 100, 100)}%`, backgroundColor: style.barColor }} />
                                   </div>
                                   <span className="w-12 text-right text-xs font-black text-stone-500">{(row.dominant.weight * 100).toFixed(1)}%</span>
                                 </div>
@@ -452,6 +336,20 @@ export default function ATLmanage() {
 
                 <aside className="rounded-2xl border border-primary/25 bg-white p-5">
                   <p className="text-[11px] font-black uppercase tracking-widest text-primary-hover">Ringkasan Distribusi Subskill</p>
+                  <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 p-4">
+                    <div className="flex items-start gap-3">
+                      <span className="material-symbols-outlined mt-0.5 text-xl text-sky-600">info</span>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-sky-700">Summary Recap View</p>
+                        <p className="mt-1 text-xs font-semibold leading-5 text-slate-700">
+                          Bagian ini menampilkan dominant subskill tertinggi dari setiap criterion. Gunakan view ini untuk membaca kekuatan utama per kriteria secara cepat.
+                        </p>
+                        <p className="mt-1 text-[11px] font-semibold leading-5 text-slate-500">
+                          Subskill non-dominan tetap dihitung di detail package, tetapi tidak menjadi fokus ringkasan cepat ini.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                   <div className="mt-6 flex items-center justify-center">
                     <div className="relative flex h-40 w-40 items-center justify-center rounded-full" style={{ background: summaryData.donut }}>
                       <div className="flex h-24 w-24 flex-col items-center justify-center rounded-full bg-white text-center shadow-inner">
@@ -471,8 +369,13 @@ export default function ATLmanage() {
                       </div>
                     ))}
                   </div>
-                  <div className="mt-7 rounded-2xl border border-primary/25 bg-primary/5 p-4">
-                    <p className="text-xs font-black uppercase text-primary-hover">Subskill Dominan Keseluruhan</p>
+                  <div
+                    className="mt-7 rounded-2xl border p-4"
+                    style={getSubskillStyle(summaryData.dominantOverall.subskill, summaryData.dominantOverall.atl).softStyle}
+                  >
+                    <p className="text-xs font-black uppercase" style={{ color: getSubskillStyle(summaryData.dominantOverall.subskill, summaryData.dominantOverall.atl).dot }}>
+                      Subskill Dominan Keseluruhan
+                    </p>
                     <p className="mt-2 text-xl font-black text-stone-900">{summaryData.dominantOverall.subskill}</p>
                     <p className="mt-1 text-xs leading-5 text-stone-600">Subskill ini paling berpengaruh secara keseluruhan pada seluruh kriteria penilaian.</p>
                   </div>

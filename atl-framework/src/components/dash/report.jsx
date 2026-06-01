@@ -1,15 +1,27 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import Sidebar from "./sidebar";
-import { dummyATL } from "./dummyATL";
-import { allStudentsData } from "./dummyStudents";
+import { dummyATL } from "../dummyData/dummyATL";
+import { allStudentsData } from "../dummyData/dummyStudents";
 import { exportReportExcel, getReport, getStudents, hydrateTopic } from "../../services/atlApi";
 import {
   getATLCategoryMeta,
+  getScoreDistributionConfig,
   getScoreLevel,
+  getSubskillMeta,
   hydrateLabelRegistry,
+  normalizeScoreBand,
   normalizeATLCategory,
 } from "../../services/labelRegistry";
 import { getSubjectData } from "../../services/topicCatalog";
+
+const FormulaHint = ({ text }) => (
+  <span className="group relative inline-flex">
+    <span className="material-symbols-outlined cursor-help text-[16px] text-stone-400 transition group-hover:text-primary">info</span>
+    <span className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 hidden w-80 -translate-x-1/2 rounded-xl border border-stone-200 bg-white p-3 text-[11px] font-semibold leading-5 text-stone-700 shadow-xl group-hover:block">
+      {text}
+    </span>
+  </span>
+);
 
 export default function Report() {
   const currentUser = { name: "Joko Wiryanto", role: "Guru / Evaluator" };
@@ -142,13 +154,6 @@ export default function Report() {
     "Need Further Improvement": "NFI",
     "Need Improvement": "NFI",
   };
-  const performanceBandMap = {
-    "Sangat Baik": "Excellent",
-    "Baik": "Good",
-    "Cukup": "Average",
-    "Kurang": "Low",
-    "-": "Not Assessed",
-  };
   const ratingNumericMap = {
     EE: 90,
     ME: 70,
@@ -207,12 +212,10 @@ export default function Report() {
 
             const categories = crit.atlCategories || (crit.category ? crit.category.split(",").map((name) => name.trim()).filter(Boolean) : [atlName]);
             categories.forEach((categoryName) => {
-              if (!Object.prototype.hasOwnProperty.call(catScores, categoryName)) {
-                catScores[categoryName] = 0;
-                catWeights[categoryName] = 0;
-              }
-              catScores[categoryName] += (val * 100 * weight);
-              catWeights[categoryName] += weight;
+              const normalizedCategory = normalizeATLCategory(categoryName);
+              if (!Object.prototype.hasOwnProperty.call(catScores, normalizedCategory)) return;
+              catScores[normalizedCategory] += (val * 100 * weight);
+              catWeights[normalizedCategory] += weight;
             });
           }
         });
@@ -225,7 +228,7 @@ export default function Report() {
         ...student,
         score: finalScore.toFixed(2),
         rawScore: finalScore,
-        predikat: finalScore === 0 ? "-" : (finalScore >= 85 ? "Sangat Baik" : finalScore >= 70 ? "Baik" : finalScore >= 50 ? "Cukup" : "Kurang"),
+        predikat: finalScore === 0 ? "No Data" : scoreLevel(finalScore).label,
         progress: finalScore > 75 ? "+2.5" : "-1.2",
         catAverages: Object.keys(catScores).reduce((acc, cat) => {
           acc[cat] = catWeights[cat] > 0 ? (catScores[cat] / catWeights[cat]).toFixed(1) : 0;
@@ -249,18 +252,35 @@ export default function Report() {
 
   // Analytics Logic
   const stats = useMemo(() => {
-    if (apiReport?.stats) return apiReport.stats;
+    const distributionKeys = getScoreDistributionConfig().map((item) => item.key);
+    const emptyDist = distributionKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
+    if (apiReport?.stats) {
+      const dist = { ...emptyDist };
+      const categoryBuckets = atlCategoryOrder.reduce((acc, category) => ({ ...acc, [category]: [] }), {});
+      Object.entries(apiReport.stats.dist || {}).forEach(([key, value]) => {
+        const normalized = normalizeScoreBand(key);
+        dist[normalized] = (dist[normalized] || 0) + Number(value || 0);
+      });
+      (apiReport.stats.cats || []).forEach((cat) => {
+        const normalized = normalizeATLCategory(cat.name || cat.category);
+        const value = Number(cat.val ?? cat.score ?? 0);
+        if (categoryBuckets[normalized] && Number.isFinite(value) && value > 0) categoryBuckets[normalized].push(value);
+      });
+      const cats = atlCategoryOrder.map((category) => {
+        const values = categoryBuckets[category];
+        const val = values.length ? (values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(1) : 0;
+        return { name: category, val };
+      });
+      return { ...apiReport.stats, dist, cats };
+    }
 
     const assessed = allCalculatedData.filter(s => s.rawScore > 0).length;
-    const dist = { "Sangat Baik": 0, "Baik": 0, "Cukup": 0, "Kurang": 0, "Belum Dinilai": 0 };
+    const dist = { ...emptyDist };
     const catAvg = { "Thinking Skills": 0, "Social Skills": 0, "Communication Skills": 0, "Self-Management Skills": 0, "Research Skills": 0 };
 
     allCalculatedData.forEach(s => {
-      if (s.predikat === "-") {
-        dist["Belum Dinilai"]++;
-      } else if (Object.prototype.hasOwnProperty.call(dist, s.predikat)) {
-        dist[s.predikat]++;
-      }
+      const normalized = normalizeScoreBand(s.predikat);
+      dist[normalized] = (dist[normalized] || 0) + 1;
       Object.keys(catAvg).forEach(cat => {
         catAvg[cat] += parseFloat(s.catAverages[cat] || 0);
       });
@@ -274,15 +294,9 @@ export default function Report() {
     const strongest = [...cats].sort((a, b) => b.val - a.val)[0];
 
     return { assessed, dist, cats, strongest };
-  }, [allCalculatedData, apiReport]);
+  }, [allCalculatedData, apiReport, dataVersion]);
 
-  const distributionConfig = [
-    { key: "Sangat Baik", color: "#10b981" },
-    { key: "Baik", color: "#f59e0b" },
-    { key: "Cukup", color: "#f97316" },
-    { key: "Kurang", color: "#ef4444" },
-    { key: "Belum Dinilai", color: "#94a3b8" },
-  ];
+  const distributionConfig = useMemo(() => getScoreDistributionConfig(), [dataVersion]);
 
   const distributionData = useMemo(() => {
     const total = distributionConfig.reduce((acc, item) => acc + (stats.dist[item.key] || 0), 0);
@@ -353,7 +367,7 @@ export default function Report() {
 
       const assessedCount = detailItems.filter((item) => item.ratingCode).length;
       const totalIndicators = detailItems.length;
-      const predikatText = performanceBandMap[student.predikat] || student.predikat;
+      const predikatText = normalizeScoreBand(student.predikat);
       const summaryParagraph = totalIndicators === 0
         ? `${student.name} is enrolled in ${currentSubject?.label}, sub-topic ${currentTopicIndex} (${currentTopicLabel}), but no ATL criteria are configured for this topic yet, so a narrative report cannot be generated.`
         : `${student.name} in ${currentSubject?.label}, sub-topic ${currentTopicIndex} (${currentTopicLabel}), achieved a Fuzzy AHP score of ${student.score} with the performance band "${predikatText}". Out of ${totalIndicators} ATL indicators, ${assessedCount} indicators have been assessed and are summarized below in report form.`;
@@ -369,7 +383,7 @@ export default function Report() {
         teacherInsight: buildTeacherInsightText(student, detailItems, assessedCount, totalIndicators),
       };
     },
-    [selectedTopic, currentSubject, currentTopicIndex, currentTopicLabel, performanceBandMap]
+    [selectedTopic, currentSubject, currentTopicIndex, currentTopicLabel]
   );
 
   useEffect(() => {
@@ -391,8 +405,9 @@ export default function Report() {
 
   const getPerformanceDisplay = (student) => {
     const score = Number(student?.rawScore ?? student?.score ?? 0);
-    if (!Number.isFinite(score) || score <= 0 || student?.predikat === "-") {
-      return { label: "Critical", className: "bg-red-100 text-red-700" };
+    if (!Number.isFinite(score) || score <= 0 || normalizeScoreBand(student?.predikat) === "No Data") {
+      const level = scoreLevel(0);
+      return { label: level.label, className: level.className || level.badgeClass };
     }
     const level = scoreLevel(score);
     return { label: level.label, className: level.className || level.badgeClass };
@@ -415,6 +430,10 @@ export default function Report() {
       }
       if (categories.length === 0 && item.categoryName) {
         categories = String(item.categoryName).split(",").map((category) => category.trim()).filter(Boolean);
+      }
+      if (categories.length === 0 && item.atlName) {
+        const subskillCategory = getSubskillMeta(item.atlName).categoryName;
+        if (subskillCategory) categories = [subskillCategory];
       }
       if (categories.length === 0 && atlCategoryOrder.includes(normalizeATLCategory(item.atlName))) {
         categories = [normalizeATLCategory(item.atlName)];
@@ -659,7 +678,7 @@ export default function Report() {
                   <div>
                     <span className="block text-xs font-semibold text-stone-500">Rata-rata Kelas</span>
                     <span className="mt-1 block text-lg font-black text-text-main-light lg:text-xl">
-                      {avgClassScore} <span className="text-xs font-bold text-green-600">({parseFloat(avgClassScore) >= 70 ? 'Baik' : 'Perlu Pendampingan'})</span>
+                      {avgClassScore} <span className={`text-xs font-bold ${scoreLevel(avgClassScore).textClass || "text-green-600"}`}>({scoreLevel(avgClassScore).label})</span>
                     </span>
                   </div>
                 </div>
@@ -823,6 +842,38 @@ export default function Report() {
                     className="rounded-lg border border-stone-200 bg-white px-2 py-1 text-stone-600 transition-all hover:bg-stone-50 disabled:opacity-30">
                     <span className="material-symbols-outlined text-[18px]">chevron_right</span>
                   </button>
+                </div>
+              </div>
+              <div className="border-t border-stone-200 bg-white px-5 py-5">
+                <div className="grid gap-4 lg:grid-cols-[1fr_1.3fr]">
+                  <div className="rounded-2xl border border-yellow-200 bg-yellow-50/70 p-4">
+                    <div className="flex items-start gap-3">
+                      <span className="material-symbols-outlined mt-0.5 text-[20px] text-yellow-600">info</span>
+                      <div>
+                        <p className="text-sm font-black text-stone-950">Keterangan Kolom</p>
+                        <p className="mt-2 text-xs font-semibold leading-5 text-stone-600">
+                          <b>Skor Fuzzy AHP</b> adalah nilai akhir ATL siswa dari rubric yang sudah dinilai dan bobot subskill. <b>Progress</b> menunjukkan perubahan skor dibanding data penilaian sebelumnya pada filter yang sama.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                    <p className="text-sm font-black text-stone-950">Predikat Penilaian</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {distributionConfig.map((item) => (
+                        <span
+                          key={item.key}
+                          className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-black ${item.className || "bg-white text-stone-700"}`}
+                        >
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
+                          {item.key}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="mt-3 text-xs font-semibold leading-5 text-stone-500">
+                      Critical, Low, Average, Good, dan Excellent adalah lima skala interpretasi skor akhir agar hasil tabel lebih mudah dibaca.
+                    </p>
+                  </div>
                 </div>
               </div>
             </section>
@@ -1030,9 +1081,12 @@ export default function Report() {
                   </div>
                 </section>
 
-                <section className="mt-7 overflow-hidden rounded-2xl border border-stone-200 bg-white">
+                <section className="mt-7 overflow-visible rounded-2xl border border-stone-200 bg-white">
                   <div className="border-b border-stone-200 px-6 py-4">
-                    <h4 className="text-xl font-black text-slate-950">ATL Performance by Category</h4>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xl font-black text-slate-950">ATL Performance by Category</h4>
+                      <FormulaHint text="Ringkasan ini selalu memakai 5 kategori resmi ATL. Alias seperti Communication atau Self-Management digabung ke nama resmi agar tidak muncul kategori dobel." />
+                    </div>
                     <p className="mt-1 text-sm font-semibold text-slate-500">
                       Nilai numerik 5 jenis ATL dihitung dari indikator rubric dan skala fuzzy yang sudah dinilai.
                     </p>
@@ -1047,7 +1101,10 @@ export default function Report() {
                               <span className="material-symbols-outlined text-[30px]">{meta.icon}</span>
                             </span>
                             <div>
-                              <p className="text-lg font-black text-slate-950">{category.name}</p>
+                              <div className="flex items-center gap-2">
+                                <p className="text-lg font-black text-slate-950">{category.name}</p>
+                                <FormulaHint text={`Rumus: skor ${category.name} = rata-rata nilai indikator softskill ATL pada kategori ini. Level rubric dikonversi menjadi NFI=10, PTE=30, DE=50, ME=70, EE=90, lalu dirata-ratakan dari indikator yang tersedia.`} />
+                              </div>
                               <p className="mt-1 text-sm leading-6 text-slate-600">
                                 {category.assessedIndicators > 0
                                   ? `Nilai ${Number(category.score || 0).toFixed(1)} diambil dari rata-rata ${category.assessedIndicators} indikator softskill ATL dalam subtopik ${currentTopicLabel}.`

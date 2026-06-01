@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { dummyATL, saveATLData } from "./dummyATL";
+import { dummyATL, saveATLData } from "../dummyData/dummyATL";
 import { calculateContextWeights, getCriteria, getWeights, saveWeights } from "../../services/atlApi";
+import { getSubskillColorHex, getSubskillMeta } from "../../services/labelRegistry";
 import { getSubjectData } from "../../services/topicCatalog";
 
  const scaleOptions = [
@@ -75,54 +76,57 @@ const describeWeight = (weight) => {
   if (value >= 0.15) return "Supporting contribution";
   return "Minor evidence contribution";
 };
-const subskillIconTone = (subskill = "", index = 0) => {
-  const toneMap = {
-    "Critical Thingking": { icon: "psychology_alt", bg: "bg-[#00E5E5]", bar: "bg-[#00E5E5]" },
-    "Critical Thinking": { icon: "psychology_alt", bg: "bg-[#00E5E5]", bar: "bg-[#00E5E5]" },
-    "Creative Thingking": { icon: "lightbulb", bg: "bg-[#0B0787]", bar: "bg-[#0B0787]" },
-    "Creative Thinking": { icon: "lightbulb", bg: "bg-[#0B0787]", bar: "bg-[#0B0787]" },
-    InformationTransfer: { icon: "sync_alt", bg: "bg-[#1100FF]", bar: "bg-[#1100FF]" },
-    "Reflection / Metacognitive": { icon: "neurology", bg: "bg-[#4B8DBB]", bar: "bg-[#4B8DBB]" },
-    "Textual Literacy": { icon: "article", bg: "bg-red-600", bar: "bg-red-600" },
-    "Media Literacy": { icon: "perm_media", bg: "bg-red-500", bar: "bg-red-500" },
-    "Ethical use of information": { icon: "shield", bg: "bg-red-700", bar: "bg-red-700" },
-    "Exchanging-information": { icon: "chat_bubble", bg: "bg-purple-600", bar: "bg-purple-600" },
-    "Literacy skills": { icon: "menu_book", bg: "bg-purple-500", bar: "bg-purple-500" },
-    "ICT skills": { icon: "devices", bg: "bg-purple-700", bar: "bg-purple-700" },
-    "Interpersonal relationships": { icon: "groups", bg: "bg-green-600", bar: "bg-green-600" },
-    "Social-emotional intelligence": { icon: "diversity_3", bg: "bg-green-500", bar: "bg-green-500" },
-    "Organization skills": { icon: "event_note", bg: "bg-orange-600", bar: "bg-orange-600" },
-    "State of Mind": { icon: "self_improvement", bg: "bg-orange-500", bar: "bg-orange-500" },
-  };
-  if (toneMap[subskill]) return toneMap[subskill];
-  return [
-    { icon: "auto_awesome", bg: "bg-amber-500", bar: "bg-amber-500" },
-    { icon: "psychology", bg: "bg-violet-500", bar: "bg-violet-500" },
-    { icon: "groups", bg: "bg-green-500", bar: "bg-green-500" },
-    { icon: "business_center", bg: "bg-red-500", bar: "bg-red-500" },
-  ][index % 4];
-};
-const subskillColorHex = (subskill = "", index = 0) => {
-  const colorMap = {
-    "Critical Thingking": "rgb(0, 229, 229)",
-    "Creative Thinking": "rgb(11, 7, 135)",
-    "InformationTransfer": "rgb(17, 0, 255)",
-    "Reflection / Metacognitive": "rgb(75, 141, 187)",
-    "Textual Literacy": "rgb(243, 147, 73)",
-    "Media Literacy": "rgb(243, 0, 0)",
-    "Ethical use of information": "rgb(93, 2, 2)",
-    "Exchanging-information": "rgb(128, 9, 240)",
-    "Literacy skills": "rgb(168, 85, 247)",
-    "ICT skills": "rgb(41, 3, 74)",
-    "Interpersonal relationships": "rgb(22, 163, 74)",
-    "Social-emotional intelligence": "rgb(34, 197, 94)",
-    "Organization skills": "rgb(232, 248, 6)",
-    "State of Mind": "rgb(219, 245, 136)",
-  };
-  if (colorMap[subskill]) return colorMap[subskill];
-  return ["#F59E0B", "#8B5CF6", "#22C55E", "#EF4444"][index % 4];
-};
+const ResultHoverCard = ({ item, mode }) => {
+  if (!item) {
+    return (
+      <div className="rounded-2xl border border-stone-200 bg-white/95 p-4 shadow-sm">
+        <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Info Diagram</p>
+        <p className="mt-2 text-xs font-semibold leading-5 text-stone-500">
+          Arahkan cursor ke titik, irisan, atau legend untuk melihat detail subskill.
+        </p>
+      </div>
+    );
+  }
 
+  return (
+    <div className="rounded-2xl border border-stone-200 bg-white/95 p-4 shadow-[0_18px_45px_rgba(15,23,42,0.08)]">
+      <div className="flex items-start gap-3">
+        <span className="mt-1 h-3 w-3 shrink-0 rounded-full ring-4 ring-stone-100" style={{ backgroundColor: item.color }} />
+        <div className="min-w-0">
+          <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">{mode === "pie" ? "Pie Segment" : "Radar Point"}</p>
+          <h4 className="mt-1 text-sm font-black leading-tight text-stone-950">{item.subskill}</h4>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-xl bg-stone-50 px-2 py-2">
+          <p className="text-[9px] font-black uppercase text-stone-400">Total</p>
+          <p className="mt-1 text-xs font-black text-stone-900">{formatWeightDisplay(item.total)}</p>
+        </div>
+        <div className="rounded-xl bg-stone-50 px-2 py-2">
+          <p className="text-[9px] font-black uppercase text-stone-400">Share</p>
+          <p className="mt-1 text-xs font-black text-stone-900">{Math.round(Number(item.share || 0) * 100)}%</p>
+        </div>
+        <div className="rounded-xl bg-stone-50 px-2 py-2">
+          <p className="text-[9px] font-black uppercase text-stone-400">Package</p>
+          <p className="mt-1 text-xs font-black text-stone-900">{item.count || 0}</p>
+        </div>
+      </div>
+      <p className="mt-3 text-[11px] font-semibold leading-5 text-stone-500">
+        {mode === "pie"
+          ? "Porsi ini menunjukkan kontribusi subskill terhadap total bobot semua criterion package."
+          : "Jarak titik dari pusat menunjukkan seberapa besar bobot total subskill dibanding subskill terbesar."}
+      </p>
+      {(item.criteria || []).length > 0 && (
+        <div className="mt-3 rounded-xl bg-primary/5 px-3 py-2">
+          <p className="text-[9px] font-black uppercase tracking-widest text-primary-hover">Sumber Criterion</p>
+          <p className="mt-1 line-clamp-2 text-[11px] font-semibold leading-5 text-stone-600">
+            {Array.from(new Set(item.criteria)).join(", ")}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
 const riTable = { 1: 0, 2: 0, 3: 0.58, 4: 0.9, 5: 1.12, 6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49 };
 const calculateConsistencyRatio = (matrix) => {
   const n = matrix.length;
@@ -163,6 +167,17 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
   const [result, setResult] = useState(null);
   const [dataVersion, setDataVersion] = useState(0);
   const [resultVisualIndex, setResultVisualIndex] = useState(0);
+  const [fuzzyPackageIndex, setFuzzyPackageIndex] = useState(0);
+  const [resultHover, setResultHover] = useState(null);
+
+  useEffect(() => {
+    const packageCount = Object.keys(result?.packages || {}).length;
+    setFuzzyPackageIndex((index) => Math.min(Math.max(index, 0), Math.max(packageCount - 1, 0)));
+  }, [result]);
+
+  useEffect(() => {
+    setResultHover(null);
+  }, [resultVisualIndex, result]);
 
   const buildLocalResultFor = (criteriaList, pairwiseMap = {}) => {
     const n = criteriaList.length;
@@ -502,7 +517,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
       y: 50 + radius * Math.sin(angle),
       axisX: 50 + 42 * Math.cos(angle),
       axisY: 50 + 42 * Math.sin(angle),
-      color: subskillColorHex(row.subskill, index),
+      color: getSubskillColorHex(row.subskill, index),
     };
   });
   let donutCursor = 0;
@@ -510,34 +525,80 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
     const share = resultDistributionTotal > 0 ? row.total / resultDistributionTotal : 0;
     const segment = {
       ...row,
-      color: subskillColorHex(row.subskill, index),
+      color: getSubskillColorHex(row.subskill, index),
       dash: `${share * 100} ${100 - share * 100}`,
       offset: 25 - donutCursor * 100,
+      start: donutCursor,
+      end: donutCursor + share,
     };
     donutCursor += share;
     return segment;
   });
+  const pieGradient = donutSegments.length
+    ? `conic-gradient(${donutSegments.map((segment) => `${segment.color} ${segment.start * 100}% ${segment.end * 100}%`).join(", ")})`
+    : "conic-gradient(#E7E5E4 0% 100%)";
   const resultVisualTabs = [
     {
       key: "radar",
       icon: "radar",
       title: "Radar Weight Profile",
       description: "Melihat keseimbangan pengaruh antar softskill. Semakin jauh titik dari tengah, semakin besar total bobotnya.",
+      guide: {
+        title: "Cara Membaca Radar",
+        intro: "Radar dipakai untuk membaca bentuk distribusi bobot antar softskill, bukan untuk membaca nilai siswa.",
+        points: [
+          "Titik yang lebih jauh dari pusat berarti softskill tersebut memiliki total bobot lebih besar.",
+          "Bidang yang melebar ke satu arah berarti weighting terkonsentrasi pada softskill tertentu.",
+          "Bidang yang relatif merata berarti kontribusi antar softskill lebih seimbang.",
+          "Hover titik atau legend untuk melihat total weight, share, dan criterion package sumbernya.",
+        ],
+      },
     },
     {
-      key: "donut",
-      icon: "donut_large",
-      title: "Donut Distribution",
-      description: "Melihat porsi kontribusi setiap softskill terhadap total bobot. Legend tetap menampilkan softskill bernilai 0.00.",
+      key: "pie",
+      icon: "pie_chart",
+      title: "2D Pie Distribution",
+      description: "Melihat porsi kontribusi semua softskill dalam proses expert weighting. Legend tetap menampilkan total contribution dan share setiap softskill.",
+      guide: {
+        title: "Cara Membaca 2D Pie",
+        intro: "Pie memperlihatkan share setiap softskill terhadap total bobot seluruh criterion package.",
+        points: [
+          "Irisan terbesar menunjukkan softskill dengan kontribusi total paling tinggi.",
+          "Persentase pada legend adalah share dari akumulasi bobot, bukan persentase nilai siswa.",
+          "Softskill dengan irisan kecil tetap dihitung jika muncul pada rubric item.",
+          "Hover irisan atau legend untuk melihat total bobot, share, dan criterion yang menyumbang bobot.",
+        ],
+      },
     },
     {
       key: "coverage",
       icon: "schema",
-      title: "Criterion Coverage Map",
-      description: "Melihat criterion mana yang menjadi sumber bobot setiap softskill sebelum dipakai pada input ATL siswa.",
+      title: "Evidence Weight Matrix",
+      description: "Melihat criterion package mana yang menyumbang bobot ke setiap softskill sebelum dipakai pada input ATL siswa.",
+      guide: {
+        title: "Cara Membaca Matrix",
+        intro: "Matrix menjelaskan asal bobot: baris adalah criterion package, kolom adalah softskill.",
+        points: [
+          "Angka W adalah local weight softskill pada criterion package tersebut.",
+          "Bar yang lebih panjang berarti subskill lebih berpengaruh pada package itu.",
+          "Nilai 0.00 berarti softskill tidak menjadi bagian dari package tersebut.",
+          "Gunakan matrix untuk melacak mengapa sebuah softskill besar pada radar atau pie.",
+        ],
+      },
     },
   ];
   const activeResultVisual = resultVisualTabs[resultVisualIndex] || resultVisualTabs[0];
+  const activeResultInfo = resultHover || (dominantSoftskill ? { ...dominantSoftskill, color: getSubskillColorHex(dominantSoftskill.subskill, 0) } : null);
+  const handlePieHover = (event) => {
+    if (!donutSegments.length) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - rect.left - rect.width / 2;
+    const y = event.clientY - rect.top - rect.height / 2;
+    const angle = ((Math.atan2(y, x) * 180) / Math.PI + 90 + 360) % 360;
+    const position = angle / 360;
+    const hovered = donutSegments.find((segment) => position >= segment.start && position <= segment.end) || donutSegments[0];
+    setResultHover(hovered);
+  };
 
   return (
     <div className="flex h-full min-h-[600px] gap-8">
@@ -590,14 +651,6 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                 className="rounded-xl border border-primary/25 bg-white px-3 py-2 text-left text-[11px] font-black text-primary transition hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Lihat Fuzzy Process
-              </button>
-              <button
-                type="button"
-                disabled={!hasSavedWeight}
-                onClick={() => openSavedWeightStep(4)}
-                className="rounded-xl border border-primary/25 bg-white px-3 py-2 text-left text-[11px] font-black text-primary transition hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Lihat Result
               </button>
             </div>
           </div>
@@ -728,9 +781,13 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                         <p className="text-xs font-black uppercase tracking-wider text-stone-500">{pkg.criteriaTopic}</p>
                         <div className="flex min-w-0 flex-wrap gap-1.5">
                           {pkg.subskills.map((atlSkill, skillIndex) => {
-                            const tone = subskillIconTone(atlSkill, skillIndex);
+                            const tone = getSubskillMeta(atlSkill, skillIndex);
                             return (
-                            <span key={atlSkill} className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black text-white ${tone.bg}`}>
+                            <span
+                              key={atlSkill}
+                              className="inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black"
+                              style={tone.solidStyle}
+                            >
                               <span className="material-symbols-outlined text-[13px]">{tone.icon}</span>
                               {atlSkill}
                             </span>
@@ -770,11 +827,18 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-stone-400">{pkg.criteriaTopic}</p>
                     <p className="mt-4 text-[10px] font-bold uppercase tracking-widest text-stone-400">ATL Subskill dalam Paket</p>
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {pkg.subskills.map((atlSkill, idx) => (
-                        <span key={idx} className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700">
-                          {atlSkill}
-                        </span>
-                      )) || []}
+                      {pkg.subskills.map((atlSkill, idx) => {
+                        const tone = getSubskillMeta(atlSkill, idx);
+                        return (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center rounded-full border px-2 py-1 text-[9px] font-bold"
+                            style={tone.chipStyle}
+                          >
+                            {atlSkill}
+                          </span>
+                        );
+                      }) || []}
                     </div>
                   </div>
                 ))}
@@ -878,7 +942,8 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
           {/* STEP 3: FUZZY-AHP PROCESS */}
           {step === 3 && (() => {
             const packageEntries = Object.entries(result?.packages || {});
-            const [activePackageKey, activePackage] = packageEntries[0] || [];
+            const safePackageIndex = Math.min(fuzzyPackageIndex, Math.max(packageEntries.length - 1, 0));
+            const [activePackageKey, activePackage] = packageEntries[safePackageIndex] || packageEntries[0] || [];
             const traceRows = activePackage?.pairwiseTrace || Object.values(pairwise?.[activePackageKey] || {});
             const weightEntries = Object.entries(activePackage?.weights || {});
             const subskills = activePackage?.subskills || [];
@@ -903,14 +968,34 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                       Flow ini menunjukkan transformasi dari keputusan pairwise expert menjadi bobot lokal ATL subskill. Semua tabel di bawah memakai satu criterion package aktif agar prosesnya mudah diikuti dari awal sampai normalisasi.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setStep(4)}
-                    className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-black text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
-                    Lihat Result
-                  </button>
+                  <div className="rounded-2xl border border-stone-200 bg-white p-2 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={safePackageIndex === 0}
+                        onClick={() => setFuzzyPackageIndex((index) => Math.max(0, index - 1))}
+                        className="flex h-10 w-10 items-center justify-center rounded-xl border border-stone-200 text-stone-700 transition-all hover:border-stone-400 disabled:opacity-35"
+                        aria-label="Paket sebelumnya"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                      </button>
+                      <div className="min-w-[190px] px-2 text-center">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Paket aktif</p>
+                        <p className="truncate text-xs font-black text-stone-950">
+                          {packageEntries.length ? `${safePackageIndex + 1}/${packageEntries.length} - ${activePackage?.title || activePackageKey}` : "Belum ada paket"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={safePackageIndex >= packageEntries.length - 1}
+                        onClick={() => setFuzzyPackageIndex((index) => Math.min(packageEntries.length - 1, index + 1))}
+                        className="flex h-10 w-10 items-center justify-center rounded-xl border border-stone-200 text-stone-700 transition-all hover:border-stone-400 disabled:opacity-35"
+                        aria-label="Paket berikutnya"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <section className="rounded-[2rem] border border-stone-200 bg-white p-6 shadow-sm">
@@ -1314,12 +1399,15 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     </thead>
                     <tbody className="divide-y divide-stone-200 bg-white">
                       {resultDistribution.map((row, index) => {
-                        const tone = subskillIconTone(row.subskill, index);
+                        const tone = getSubskillMeta(row.subskill, index);
                         return (
                           <tr key={row.subskill}>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-3">
-                                <span className={`flex h-8 w-8 items-center justify-center rounded-full text-white ${tone.bg}`}>
+                                <span
+                                  className="flex h-8 w-8 items-center justify-center rounded-full"
+                                  style={tone.solidStyle}
+                                >
                                   <span className="material-symbols-outlined text-[17px]">{tone.icon}</span>
                                 </span>
                                 <span className="font-bold text-stone-900">{row.subskill}</span>
@@ -1359,17 +1447,25 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                           </span>
                         </div>
                         <div className="space-y-3">
-                          {Object.entries(pkg.weights || {}).map(([subskill, weight]) => (
+                          {Object.entries(pkg.weights || {}).map(([subskill, weight], index) => {
+                            const tone = getSubskillMeta(subskill, index);
+                            return (
                             <div key={subskill}>
                               <div className="mb-1 flex items-center justify-between gap-3">
                                 <span className="min-w-0 truncate text-xs font-bold text-stone-700">{subskill}</span>
-                                <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-black text-primary">{formatWeightDisplay(weight)}</span>
+                                <span
+                                  className="rounded border px-2 py-0.5 text-[10px] font-black"
+                                  style={tone.chipStyle}
+                                >
+                                  {formatWeightDisplay(weight)}
+                                </span>
                               </div>
                               <div className="h-2 overflow-hidden rounded-full bg-white">
-                                <div className="h-full bg-primary" style={{ width: `${Math.min(Number(weight || 0) * 100, 100)}%` }} />
+                                <div className="h-full rounded-full" style={{ width: `${Math.min(Number(weight || 0) * 100, 100)}%`, backgroundColor: tone.colorHex }} />
                               </div>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </section>
                     ))}
@@ -1408,64 +1504,123 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                   </div>
                 </div>
 
+                <div className="mb-6 rounded-3xl border border-amber-200 bg-amber-50 p-5">
+                  <div className="flex items-start gap-4">
+                    <span className="material-symbols-outlined flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-500 text-white">tips_and_updates</span>
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.2em] text-amber-800">Full Weight Analysis View</p>
+                      <p className="mt-2 text-sm font-semibold leading-6 text-stone-700">
+                        Bagian ini menampilkan semua subskill yang ikut dalam proses Fuzzy-AHP, bukan hanya yang dominan. Setiap criterion package punya bobot lokal sendiri, sehingga result view dipakai untuk membaca proses weighting lengkap.
+                      </p>
+                      <p className="mt-1 text-xs font-semibold leading-5 text-stone-500">
+                        Dominant bukan satu-satunya yang dihitung. Subskill kecil tetap mempengaruhi skor akhir jika muncul pada rubric item.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
                   <div className="min-h-[360px] rounded-[2rem] border border-stone-200 bg-stone-50/60 p-6">
                     {activeResultVisual.key === "radar" && (
-                      <div className="flex h-full flex-col items-center justify-center">
-                        <svg viewBox="0 0 100 100" className="h-72 w-72 drop-shadow-sm">
-                          {[0.25, 0.5, 0.75, 1].map((radius) => (
-                            <circle key={radius} cx="50" cy="50" r={radius * 38} fill="none" stroke="#E7E5E4" strokeWidth="0.6" strokeDasharray="2 2" />
-                          ))}
-                          {radarPoints.map((point) => (
-                            <line key={`axis-${point.subskill}`} x1="50" y1="50" x2={point.axisX} y2={point.axisY} stroke="#D6D3D1" strokeWidth="0.6" />
-                          ))}
-                          <polygon
-                            points={radarPoints.map((point) => `${point.x},${point.y}`).join(" ")}
-                            fill="rgba(245, 158, 11, 0.22)"
-                            stroke="#F59E0B"
-                            strokeWidth="2"
-                          />
-                          {radarPoints.map((point) => (
-                            <circle key={`dot-${point.subskill}`} cx={point.x} cy={point.y} r="2.4" fill={point.color} stroke="#fff" strokeWidth="1" />
-                          ))}
-                        </svg>
-                        <p className="mt-2 text-center text-xs font-semibold leading-5 text-stone-500">
-                          Radar membantu melihat apakah bobot terkonsentrasi pada satu softskill atau menyebar ke beberapa softskill.
-                        </p>
+                      <div className="grid h-full gap-5 xl:grid-cols-[1fr_260px]">
+                        <div className="flex flex-col items-center justify-center">
+                          <svg viewBox="0 0 100 100" className="h-72 w-72 drop-shadow-sm">
+                            {[0.25, 0.5, 0.75, 1].map((radius) => (
+                              <circle key={radius} cx="50" cy="50" r={radius * 38} fill="none" stroke="#E7E5E4" strokeWidth="0.6" strokeDasharray="2 2" />
+                            ))}
+                            {radarPoints.map((point) => (
+                              <line key={`axis-${point.subskill}`} x1="50" y1="50" x2={point.axisX} y2={point.axisY} stroke="#D6D3D1" strokeWidth="0.6" />
+                            ))}
+                            <polygon
+                              points={radarPoints.map((point) => `${point.x},${point.y}`).join(" ")}
+                              fill="rgba(245, 158, 11, 0.22)"
+                              stroke="#F59E0B"
+                              strokeWidth="2"
+                            />
+                            {radarPoints.map((point) => (
+                              <g
+                                key={`dot-${point.subskill}`}
+                                onMouseEnter={() => setResultHover(point)}
+                                onFocus={() => setResultHover(point)}
+                                tabIndex="0"
+                                className="cursor-pointer outline-none"
+                              >
+                                <circle cx={point.x} cy={point.y} r={resultHover?.subskill === point.subskill ? "4.3" : "3.1"} fill={point.color} opacity="0.18" />
+                                <circle cx={point.x} cy={point.y} r="2.4" fill={point.color} stroke="#fff" strokeWidth="1" />
+                              </g>
+                            ))}
+                          </svg>
+                          <p className="mt-2 max-w-md text-center text-xs font-semibold leading-5 text-stone-500">
+                            Radar membaca jarak bobot dari pusat. Bentuk yang runcing berarti satu softskill lebih dominan.
+                          </p>
+                          <div className="mt-4 grid w-full gap-2 sm:grid-cols-2">
+                            {radarPoints.map((point) => (
+                              <button
+                                key={`radar-legend-${point.subskill}`}
+                                type="button"
+                                onMouseEnter={() => setResultHover(point)}
+                                onFocus={() => setResultHover(point)}
+                                className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-3 py-2 text-left transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm"
+                              >
+                                <span className="flex min-w-0 items-center gap-2">
+                                  <span className="h-3 w-3 shrink-0 rounded-full ring-4 ring-stone-100" style={{ backgroundColor: point.color }} />
+                                  <span className="truncate text-[11px] font-black text-stone-800">{point.subskill}</span>
+                                </span>
+                                <span className="shrink-0 text-[11px] font-black text-stone-500">{Math.round(point.share * 100)}%</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="self-center">
+                          <ResultHoverCard item={activeResultInfo} mode="radar" />
+                        </div>
                       </div>
                     )}
 
-                    {activeResultVisual.key === "donut" && (
-                      <div className="grid h-full gap-6 lg:grid-cols-[260px_1fr]">
-                        <div className="flex items-center justify-center">
-                          <div className="relative h-64 w-64">
-                            <svg viewBox="0 0 42 42" className="h-full w-full -rotate-90">
-                              <circle cx="21" cy="21" r="15.915" fill="transparent" stroke="#F5F5F4" strokeWidth="7" />
-                              {donutSegments.map((segment) => (
-                                <circle
-                                  key={segment.subskill}
-                                  cx="21"
-                                  cy="21"
-                                  r="15.915"
-                                  fill="transparent"
-                                  stroke={segment.color}
-                                  strokeWidth="7"
-                                  strokeDasharray={segment.dash}
-                                  strokeDashoffset={segment.offset}
-                                />
-                              ))}
-                            </svg>
-                            <div className="absolute inset-0 flex flex-col items-center justify-center">
-                              <span className="text-[10px] font-black uppercase tracking-widest text-stone-400">Total</span>
-                              <span className="text-2xl font-black text-stone-950">{formatWeightDisplay(resultDistributionRawTotal)}</span>
+                    {activeResultVisual.key === "pie" && (
+                      <div className="flex h-full flex-col justify-center gap-5">
+                        <div className="grid items-center gap-5 xl:grid-cols-[1fr_260px]">
+                          <div className="flex flex-col items-center">
+                            <div
+                              className="group relative flex h-72 w-72 items-center justify-center"
+                              onMouseMove={handlePieHover}
+                              onMouseEnter={() => donutSegments[0] && setResultHover(donutSegments[0])}
+                            >
+                              <div className="absolute inset-6 rounded-full bg-white shadow-[0_24px_60px_rgba(15,23,42,0.16)] transition duration-300 group-hover:scale-[1.03] group-hover:shadow-[0_30px_70px_rgba(15,23,42,0.22)]" />
+                              <div
+                                className="absolute inset-8 rounded-full border-[10px] border-white transition duration-300 group-hover:rotate-6 group-hover:scale-[1.04]"
+                                style={{ background: pieGradient }}
+                                title={`Process Total: ${formatWeightDisplay(resultDistributionRawTotal)}`}
+                              />
+                              <div className="absolute inset-[5.9rem] rounded-full bg-white shadow-inner" />
+                              <div className="relative z-10 text-center">
+                                <p className="text-[8px] font-black uppercase tracking-widest text-stone-400">Process Total</p>
+                                <p className="mt-0.5 text-xl font-black text-stone-950">{formatWeightDisplay(resultDistributionRawTotal)}</p>
+                                <p className="mt-0.5 text-[9px] font-bold text-stone-400">Full weighting</p>
+                              </div>
+                              <div className="pointer-events-none absolute -bottom-2 left-1/2 h-7 w-52 -translate-x-1/2 rounded-full bg-stone-900/10 blur-xl" />
                             </div>
+                            <p className="max-w-xl text-center text-[11px] font-semibold leading-5 text-stone-500">
+                              Arahkan cursor ke area pie atau legend untuk membaca subskill yang sedang disorot.
+                            </p>
                           </div>
+                          <ResultHoverCard item={activeResultInfo} mode="pie" />
                         </div>
-                        <div className="space-y-2 overflow-y-auto pr-1">
+                        <p className="max-w-xl text-center text-[11px] font-semibold leading-5 text-stone-500 xl:mx-auto">
+                          Total ini adalah akumulasi bobot semua criterion package, bukan total recap dominant-subskill.
+                        </p>
+                        <div className="grid w-full gap-2 sm:grid-cols-2 xl:grid-cols-3">
                           {donutSegments.map((segment) => (
-                            <div key={segment.subskill} className="flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-3 py-2">
+                            <div
+                              key={segment.subskill}
+                              onMouseEnter={() => setResultHover(segment)}
+                              onFocus={() => setResultHover(segment)}
+                              tabIndex="0"
+                              className="group flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-3 py-2 outline-none transition hover:-translate-y-0.5 hover:border-stone-300 hover:shadow-md focus:border-primary/50 focus:ring-2 focus:ring-primary/15"
+                              title={`${segment.subskill}: ${formatWeightDisplay(segment.total)} (${Math.round(segment.share * 100)}%)`}
+                            >
                               <div className="flex min-w-0 items-center gap-2">
-                                <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
+                                <span className="h-3 w-3 shrink-0 rounded-full ring-4 ring-stone-100 transition group-hover:scale-125" style={{ backgroundColor: segment.color }} />
                                 <span className="truncate text-xs font-black text-stone-800">{segment.subskill}</span>
                               </div>
                               <div className="shrink-0 text-right">
@@ -1479,38 +1634,57 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     )}
 
                     {activeResultVisual.key === "coverage" && (
-                      <div className="h-full overflow-x-auto">
-                        <div className="min-w-[720px]">
-                          <div className="grid gap-2" style={{ gridTemplateColumns: `220px repeat(${Math.max(resultDistribution.length, 1)}, minmax(92px, 1fr))` }}>
-                            <div className="rounded-xl bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-stone-400">Criterion</div>
-                            {resultDistribution.map((row, index) => (
-                              <div key={row.subskill} className="rounded-xl bg-white px-3 py-2 text-center text-[10px] font-black text-stone-700">
-                                <span className="line-clamp-2">{row.subskill}</span>
-                              </div>
-                            ))}
-                            {resultPackageEntries.map(([packageKey, pkg]) => (
-                              <React.Fragment key={packageKey}>
-                                <div className="rounded-xl border border-stone-200 bg-white px-3 py-3">
-                                  <p className="text-[10px] font-black uppercase tracking-widest text-primary">{pkg.criteriaTopic}</p>
-                                  <p className="mt-1 text-xs font-black text-stone-900">{pkg.title}</p>
-                                </div>
-                                {resultDistribution.map((row, index) => {
-                                  const weight = Number(pkg.weights?.[row.subskill] || 0);
-                                  return (
-                                    <div key={`${packageKey}-${row.subskill}`} className="rounded-xl border border-stone-200 bg-white p-3">
-                                      <div className="mb-2 flex items-center justify-between">
-                                        <span className="text-[10px] font-black text-stone-400">W</span>
-                                        <span className="text-xs font-black text-stone-900">{formatWeightDisplay(weight)}</span>
-                                      </div>
-                                      <div className="h-2 overflow-hidden rounded-full bg-stone-100">
-                                        <div className="h-full rounded-full" style={{ width: `${Math.min(weight * 100, 100)}%`, backgroundColor: subskillColorHex(row.subskill, index) }} />
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </React.Fragment>
-                            ))}
-                          </div>
+                      <div className="flex h-full flex-col gap-4">
+                        <div className="overflow-x-auto">
+                          <table className="min-w-[820px] border-separate border-spacing-2">
+                            <thead>
+                              <tr>
+                                <th className="sticky left-0 z-10 rounded-xl bg-white px-3 py-3 text-left text-[10px] font-black uppercase tracking-widest text-stone-400 shadow-sm">Criterion Package</th>
+                                {resultDistribution.map((row) => (
+                                  <th key={row.subskill} className="rounded-xl bg-white px-3 py-3 text-center text-[10px] font-black text-stone-700 shadow-sm">
+                                    <span className="line-clamp-2">{row.subskill}</span>
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {resultPackageEntries.map(([packageKey, pkg]) => (
+                                <tr key={packageKey}>
+                                  <td className="sticky left-0 z-10 min-w-[220px] rounded-xl border border-stone-200 bg-white px-3 py-3 shadow-sm">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-primary">{pkg.criteriaTopic}</p>
+                                    <p className="mt-1 text-xs font-black text-stone-900">{pkg.title}</p>
+                                  </td>
+                                  {resultDistribution.map((row, index) => {
+                                    const weight = Number(pkg.weights?.[row.subskill] || 0);
+                                    const color = getSubskillColorHex(row.subskill, index);
+                                    const isZero = weight <= 0;
+                                    return (
+                                      <td
+                                        key={`${packageKey}-${row.subskill}`}
+                                        className={`min-w-[108px] rounded-xl border p-3 ${isZero ? "border-stone-100 bg-white/70" : "border-stone-200 bg-white shadow-sm"}`}
+                                      >
+                                        <div className="mb-2 flex items-center justify-between gap-2">
+                                          <span className="text-[10px] font-black text-stone-400">W</span>
+                                          <span className={`text-xs font-black ${isZero ? "text-stone-300" : "text-stone-900"}`}>{formatWeightDisplay(weight)}</span>
+                                        </div>
+                                        <div className="h-2 overflow-hidden rounded-full bg-stone-100">
+                                          <div
+                                            className="h-full rounded-full transition-all"
+                                            style={{ width: `${Math.min(weight * 100, 100)}%`, backgroundColor: isZero ? "#E7E5E4" : color }}
+                                          />
+                                        </div>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="grid gap-2 rounded-2xl border border-stone-200 bg-white p-4 text-[11px] font-semibold leading-5 text-stone-600 md:grid-cols-3">
+                          <p><strong className="text-stone-900">W</strong> = local weight subskill dalam criterion package.</p>
+                          <p><strong className="text-stone-900">0.00</strong> = subskill tidak berpengaruh pada package tersebut.</p>
+                          <p>Semakin panjang bar, semakin besar kontribusi pada package itu.</p>
                         </div>
                       </div>
                     )}
@@ -1524,9 +1698,21 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     <p className="mt-2 text-sm font-semibold leading-6 text-stone-600">{activeResultVisual.description}</p>
                     <div className="mt-5 rounded-2xl border border-white/80 bg-white p-4">
                       <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Cara Dibaca</p>
+                      <h4 className="mt-2 text-sm font-black text-stone-950">{activeResultVisual.guide.title}</h4>
                       <p className="mt-2 text-xs font-semibold leading-5 text-stone-600">
-                        Visualisasi ini hanya menjelaskan importance weight. Nilai siswa tetap dihitung saat guru memilih level rubric pada input ATL: fuzzy rubric score dikalikan bobot softskill yang relevan.
+                        {activeResultVisual.guide.intro}
                       </p>
+                      <div className="mt-3 space-y-2 text-[11px] font-semibold leading-5 text-stone-500">
+                        {activeResultVisual.guide.points.map((point, index) => (
+                          <p key={point} className="flex gap-2">
+                            <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[9px] font-black text-primary">{index + 1}</span>
+                            <span>{point}</span>
+                          </p>
+                        ))}
+                      </div>
+                      <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] font-semibold leading-5 text-amber-900">
+                        Nilai akhir siswa tetap dihitung dari level rubrik pada input ATL, lalu dikalikan dengan bobot softskill yang relevan.
+                      </div>
                     </div>
                   </aside>
                 </div>
@@ -1572,9 +1758,9 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
             <button
               onClick={() => setStep(step + 1)}
               disabled={step === 2 && !result}
-              className="flex items-center gap-2 rounded-2xl bg-stone-900 px-8 py-3 text-sm font-black text-white shadow-xl shadow-stone-950/20 transition-all hover:bg-stone-800 hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex items-center gap-2 rounded-2xl bg-stone-950 px-8 py-3 text-sm font-black text-white shadow-xl shadow-stone-950/20 transition-all hover:bg-stone-800 hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Lanjutkan <span className="material-symbols-outlined text-lg">arrow_forward</span>
+              {step === 3 ? "Lihat Result" : "Lanjutkan"} <span className="material-symbols-outlined text-lg">arrow_forward</span>
             </button>
           ) : (
             <button 

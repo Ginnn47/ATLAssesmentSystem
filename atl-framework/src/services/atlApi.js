@@ -1,8 +1,63 @@
 import api from "../api";
-import { dummyATL, saveATLData } from "../components/dash/dummyATL";
-import { allStudentsData } from "../components/dash/dummyStudents";
+import { dummyATL, saveATLData } from "../components/dummyData/dummyATL";
+import { allStudentsData } from "../components/dummyData/dummyStudents";
+import {
+  getATLDistributionTemplate,
+  getNoDataLevel,
+  getScoreLevel,
+  getSubskillMeta,
+  normalizeATLCategory,
+} from "./labelRegistry";
 
 const unwrap = (response) => response?.data || {};
+
+export const loginUser = async ({ username, password }) => {
+  const data = unwrap(await api.post("auth/login/", { username, password }));
+  if (data.user) localStorage.setItem("atl_current_user", JSON.stringify(data.user));
+  return data.user || null;
+};
+
+export const logoutUser = async () => {
+  await api.post("auth/logout/");
+  localStorage.removeItem("atl_current_user");
+  return true;
+};
+
+export const getCurrentUser = async () => {
+  try {
+    const data = unwrap(await api.get("auth/me/"));
+    if (data.user) localStorage.setItem("atl_current_user", JSON.stringify(data.user));
+    return data.user || null;
+  } catch (error) {
+    const cached = localStorage.getItem("atl_current_user");
+    return cached ? JSON.parse(cached) : null;
+  }
+};
+
+export const getClasses = async () => {
+  const data = unwrap(await api.get("classes/"));
+  return data.classes || [];
+};
+
+export const createClass = async (payload) => {
+  const data = unwrap(await api.post("classes/", payload));
+  return data.class || null;
+};
+
+export const getUsers = async () => {
+  const data = unwrap(await api.get("users/"));
+  return data.users || [];
+};
+
+export const createUser = async (payload) => {
+  const data = unwrap(await api.post("users/", payload));
+  return data.user || null;
+};
+
+export const updateUser = async (userId, payload) => {
+  const data = unwrap(await api.put(`users/${userId}/`, payload));
+  return data.user || null;
+};
 
 const getLocalATLData = () => {
   try {
@@ -11,25 +66,6 @@ const getLocalATLData = () => {
   } catch (error) {
     return null;
   }
-};
-
-const atlCategoryMap = {
-  "Critical Thingking": "Thinking Skills",
-  "Critical Thinking": "Thinking Skills",
-  "Creative Thingking": "Thinking Skills",
-  "Creative Thinking": "Thinking Skills",
-  InformationTransfer: "Thinking Skills",
-  "Reflection / Metacognitive": "Thinking Skills",
-  "Textual Literacy": "Research Skills",
-  "Media Literacy": "Research Skills",
-  "Ethical use of information": "Research Skills",
-  "Exchanging-information": "Communication Skills",
-  "Literacy skills": "Communication Skills",
-  "ICT skills": "Communication Skills",
-  "Interpersonal relationships": "Social Skills",
-  "Social-emotional intelligence": "Social Skills",
-  "Organization skills": "Self-Management Skills",
-  "State of Mind": "Self-Management Skills",
 };
 
 const ratingScoreMap = {
@@ -41,24 +77,51 @@ const ratingScoreMap = {
   "Need Improvement": 10,
 };
 
-const atlDistributionTemplate = [
-  { category: "Thinking Skills", score: 0, color: "#F6B21A" },
-  { category: "Communication Skills", score: 0, color: "#4F8DE8" },
-  { category: "Social Skills", score: 0, color: "#45B978" },
-  { category: "Self-Management Skills", score: 0, color: "#8D55D7" },
-  { category: "Research Skills", score: 0, color: "#14B8A6" },
-];
-
 const scoreCategory = (score) => {
   const value = Number(score || 0);
-  if (value >= 85) return { label: "Excellent", color: "#10b981", badgeClass: "bg-emerald-100 text-emerald-700" };
-  if (value >= 70) return { label: "Good", color: "#3b82f6", badgeClass: "bg-blue-100 text-blue-700" };
-  if (value >= 50) return { label: "Average", color: "#f59e0b", badgeClass: "bg-amber-100 text-amber-700" };
-  if (value >= 30) return { label: "Low", color: "#f97316", badgeClass: "bg-orange-100 text-orange-700" };
-  return { label: "Critical", color: "#ef4444", badgeClass: "bg-red-100 text-red-700" };
+  return getScoreLevel(value);
 };
 
-const noDataLevel = { label: "No Data", color: "#a8a29e", badgeClass: "bg-stone-100 text-stone-500", count: 0 };
+const noDataLevel = () => getNoDataLevel();
+
+const getSubskillCategory = (subskill) => getSubskillMeta(subskill).categoryName || normalizeATLCategory(subskill);
+const ATL_CATEGORY_ORDER = getATLDistributionTemplate().map((item) => item.category);
+
+const emptyCategoryBuckets = () => ATL_CATEGORY_ORDER.reduce((acc, category) => ({ ...acc, [category]: [] }), {});
+
+const normalizeCategoryScoreRows = (rows = []) => {
+  const buckets = emptyCategoryBuckets();
+  (rows || []).forEach((row) => {
+    const category = normalizeATLCategory(row.category || row.name || row.label);
+    const score = Number(row.score ?? row.val ?? row.value ?? 0);
+    if (buckets[category] && Number.isFinite(score) && score > 0) buckets[category].push(score);
+  });
+  return ATL_CATEGORY_ORDER
+    .map((category) => {
+      const values = buckets[category];
+      const score = values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
+      return { category, score };
+    })
+    .filter((item) => item.score > 0);
+};
+
+const normalizeClassAnalyticsPayload = (data) => {
+  if (!data || !Array.isArray(data.students)) return data;
+  const students = data.students.map((student) => ({
+    ...student,
+    strength: normalizeATLCategory(student.strength),
+    focus: normalizeATLCategory(student.focus),
+    categoryScores: normalizeCategoryScoreRows(student.categoryScores || []),
+  }));
+  const categoryAverages = normalizeCategoryScoreRows(data.categoryAverages || students.flatMap((student) => student.categoryScores || []))
+    .sort((a, b) => b.score - a.score);
+  return {
+    ...data,
+    students,
+    categoryAverages,
+    topFocus: categoryAverages.slice().sort((a, b) => a.score - b.score)[0]?.category || data.topFocus || "-",
+  };
+};
 
 const parsePercent = (value) => {
   const parsed = Number(String(value ?? "").replace("%", ""));
@@ -71,7 +134,7 @@ const buildLocalClassAnalytics = (className, atlData = getLocalATLData()) => {
   const analytics = students.map((student) => {
     const studentAssessments = assessments[String(student.id)] || {};
     const topicScores = [];
-    const categoryBuckets = {};
+    const categoryBuckets = emptyCategoryBuckets();
     const topicDetails = Object.entries(studentAssessments).map(([topicId, ratings]) => {
       const scores = Object.values(ratings || {}).map((label) => ratingScoreMap[label]).filter(Boolean);
       const average = scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : 0;
@@ -83,12 +146,12 @@ const buildLocalClassAnalytics = (className, atlData = getLocalATLData()) => {
         if (!score) return;
         const matchedCriterion = criteria.find((criterion) => ratingKey.includes(`_${criterion.kriteria}_`));
         const matchedSubskill = (matchedCriterion?.atl || []).find((subskill) => ratingKey.endsWith(`_${subskill}`));
-        const category =
+        const category = normalizeATLCategory(
           (matchedCriterion?.atlCategories || [])[0] ||
-          atlCategoryMap[matchedSubskill] ||
-          "Thinking Skills";
-        if (!categoryBuckets[category]) categoryBuckets[category] = [];
-        categoryBuckets[category].push(score);
+          getSubskillCategory(matchedSubskill) ||
+          "Thinking Skills"
+        );
+        if (categoryBuckets[category]) categoryBuckets[category].push(score);
       });
 
       return {
@@ -106,14 +169,18 @@ const buildLocalClassAnalytics = (className, atlData = getLocalATLData()) => {
       : null;
     const fallbackScore = parsePercent(student.overall);
     const overallScore = computedScore ?? (fallbackScore || null);
-    const categoryScores = Object.entries(categoryBuckets).map(([category, values]) => ({
-      category,
-      score: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length),
-    }));
+    const categoryScores = Object.entries(categoryBuckets)
+      .filter(([, values]) => values.length > 0)
+      .map(([category, values]) => ({
+        category,
+        score: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length),
+      }));
     if (categoryScores.length === 0 && student.strength && student.strength !== "-") {
-      categoryScores.push({ category: student.strength, score: parsePercent(student.strengthValue) || fallbackScore || 0 });
-      if (student.focus && student.focus !== student.strength) {
-        categoryScores.push({ category: student.focus, score: Math.max(0, (fallbackScore || 55) - 10) });
+      const strengthCategory = normalizeATLCategory(student.strength);
+      const focusCategory = normalizeATLCategory(student.focus);
+      categoryScores.push({ category: strengthCategory, score: parsePercent(student.strengthValue) || fallbackScore || 0 });
+      if (student.focus && focusCategory !== strengthCategory) {
+        categoryScores.push({ category: focusCategory, score: Math.max(0, (fallbackScore || 55) - 10) });
       }
     }
     const strength = categoryScores.slice().sort((a, b) => b.score - a.score)[0];
@@ -124,7 +191,7 @@ const buildLocalClassAnalytics = (className, atlData = getLocalATLData()) => {
       assessedTopics: topicDetails.length,
       overallScore,
       overall: overallScore === null ? "-" : `${overallScore}%`,
-      level: overallScore === null ? noDataLevel : scoreCategory(overallScore),
+      level: overallScore === null ? noDataLevel() : scoreCategory(overallScore),
       strength: strength?.category || student.strength || "-",
       strengthValue: strength ? `${strength.score}%` : student.strengthValue || "-",
       focus: focus?.category || student.focus || "-",
@@ -153,8 +220,9 @@ const buildLocalClassAnalytics = (className, atlData = getLocalATLData()) => {
   const categoryBuckets = {};
   analytics.forEach((student) => {
     (student.categoryScores || []).forEach((item) => {
-      if (!categoryBuckets[item.category]) categoryBuckets[item.category] = [];
-      categoryBuckets[item.category].push(item.score);
+      const category = normalizeATLCategory(item.category);
+      if (!categoryBuckets[category]) categoryBuckets[category] = [];
+      categoryBuckets[category].push(item.score);
     });
   });
   const categoryAverages = Object.entries(categoryBuckets)
@@ -166,9 +234,9 @@ const buildLocalClassAnalytics = (className, atlData = getLocalATLData()) => {
     assessedCount: assessed.length,
     totalStudents: students.length,
     average,
-    averageLevel: assessed.length ? scoreCategory(average) : noDataLevel,
+    averageLevel: assessed.length ? scoreCategory(average) : noDataLevel(),
     distribution,
-    dominantCategory: assessed.length ? distribution.reduce((top, item) => (item.count > top.count ? item : top), distribution[0]) : noDataLevel,
+    dominantCategory: assessed.length ? distribution.reduce((top, item) => (item.count > top.count ? item : top), distribution[0]) : noDataLevel(),
     categoryAverages,
     topFocus: categoryAverages.slice().sort((a, b) => a.score - b.score)[0]?.category || "-",
     completion: students.length ? Math.round((assessed.length / students.length) * 100) : 0,
@@ -198,7 +266,7 @@ const buildLocalDashboardFallback = (atlData = getLocalATLData()) => {
         const matchedSubskill = (matchedCriterion?.atl || []).find((subskill) => ratingKey.endsWith(`_${subskill}`));
         const category =
           (matchedCriterion?.atlCategories || [])[0] ||
-          atlCategoryMap[matchedSubskill] ||
+          getSubskillCategory(matchedSubskill) ||
           "Thinking Skills";
         if (!categoryBuckets[category]) categoryBuckets[category] = [];
         categoryBuckets[category].push(score);
@@ -208,7 +276,7 @@ const buildLocalDashboardFallback = (atlData = getLocalATLData()) => {
 
   const average = scoreCount ? Math.round(scoreTotal / scoreCount) : 0;
   const completion = totalStudents ? Math.round((assessedStudentIds.length / totalStudents) * 100) : 0;
-  const atlDistribution = atlDistributionTemplate.map((item) => {
+  const atlDistribution = getATLDistributionTemplate().map((item) => {
     const values = categoryBuckets[item.category] || [];
     return { ...item, score: values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0 };
   });
@@ -216,7 +284,7 @@ const buildLocalDashboardFallback = (atlData = getLocalATLData()) => {
   const focus = atlDistribution.filter((item) => item.score > 0).sort((a, b) => a.score - b.score)[0]?.category || "-";
 
   return {
-    meta: { semester: "Semester 2 (2024/2025)", updatedAt: new Date().toISOString(), source: "frontend-local-fallback" },
+    meta: { semester: "Semester 2 (2024/2025)", updatedAt: new Date().toISOString(), source: "client-cache" },
     summary: {
       average,
       completion,
@@ -231,17 +299,11 @@ const buildLocalDashboardFallback = (atlData = getLocalATLData()) => {
       focusATL: focus,
       level: { label: average >= 70 ? "Good" : average >= 50 ? "Average" : average > 0 ? "Low" : "No Data", color: "#F6B21A" },
     },
-    systemRecap: [
-      { label: "Progress Penilaian", value: `${completion}%`, note: "Membaca data localStorage", icon: "tips_and_updates" },
-      { label: "Fokus Utama", value: focus, note: "Berdasarkan rating ATL tersimpan", icon: "emoji_objects" },
-      { label: "Siswa Perlu Perhatian", value: "0", note: "Butuh data backend untuk deteksi detail", icon: "person_alert" },
-      { label: "Update Terakhir", value: "Hari ini", note: "Fallback lokal aktif", icon: "schedule" },
-    ],
     overviewCards: [
-      { label: "Cakupan Penilaian", value: `${completion}%`, note: "Sebagian siswa sudah memiliki penilaian ATL.", icon: "pie_chart", color: "blue" },
-      { label: "Total Siswa", value: String(totalStudents), note: "Siswa aktif dalam proses penilaian semester ini.", icon: "groups", color: "amber" },
-      { label: "Penilaian Tersimpan", value: String(assessmentSaved), note: "Penilaian ATL yang ditemukan di localStorage.", icon: "assignment_turned_in", color: "sky" },
-      { label: "Topik Aktif", value: String(topicActive), note: "Topik ATL yang sudah memiliki input nilai.", icon: "auto_stories", color: "violet" },
+      { label: "Cakupan Rubrik", value: `${completion}%`, note: "Persentase item rubrik yang sudah memiliki nilai.", icon: "fact_check", color: "blue" },
+      { label: "Siswa Dinilai", value: `${assessedStudentIds.length}/${totalStudents}`, note: "Jumlah siswa yang sudah memiliki minimal satu nilai ATL.", icon: "groups", color: "amber" },
+      { label: "Nilai Tersimpan", value: String(assessmentSaved), note: "Total rating ATL yang tersedia untuk analisis.", icon: "assignment_turned_in", color: "sky" },
+      { label: "Topik Aktif", value: String(topicActive), note: "Topik pembelajaran yang sudah memiliki assessment.", icon: "auto_stories", color: "violet" },
     ],
     atlDistribution,
     trend: [-8, -2, 3, -1, -7].map((delta, index) => ({ label: `Minggu ${index + 1}`, score: Math.max(0, Math.min(100, average + delta)) })),
@@ -424,7 +486,7 @@ export const getATLHierarchy = async () => {
       { id: "research-ethical", name: "Ethical use of information" },
     ] },
     { id: "communication", name: "Communication Skills", subskills: [
-      { id: "communication-exchanging", name: "Exchanging-information" },
+      { id: "communication-exchanging", name: "Exchanging Information" },
       { id: "communication-literacy", name: "Literacy skills" },
       { id: "communication-ict", name: "ICT skills" },
     ] },
@@ -561,8 +623,9 @@ export const getAssessments = async ({ topicId, studentId } = {}) => {
 export const saveAssessment = async (studentId, topicId, ratings) => {
   try {
     await api.post("assessments/", { studentId, topic: topicId, ratings });
+    return true;
   } catch (error) {
-    // Local persistence below is the official fallback for this phase.
+    // Local persistence is only a fallback when the backend cannot be reached.
   }
   if (!dummyATL.savedAssessments) dummyATL.savedAssessments = {};
   if (!dummyATL.savedAssessments[studentId]) dummyATL.savedAssessments[studentId] = {};
@@ -593,40 +656,36 @@ export const exportReportExcel = async (payload) => {
 
 export const getDashboardAnalytics = async () => {
   const atlData = getLocalATLData();
-  if (atlData && Object.keys(atlData).length > 0) {
-    try {
-      const data = unwrap(await api.post("dashboard/", { atlData }));
-      if (data?.summary) return data;
-    } catch (error) {
-      // GET fallback below still supports database-backed dashboards.
-    }
-  }
-
   try {
     const data = unwrap(await api.get("dashboard/"));
     if (data?.summary?.totalStudents || data?.overviewCards?.length) return data;
-    return buildLocalDashboardFallback(atlData);
   } catch (error) {
-    return buildLocalDashboardFallback(atlData);
+    if (atlData && Object.keys(atlData).length > 0) {
+      try {
+        const data = unwrap(await api.post("dashboard/", { atlData }));
+        if (data?.summary) return data;
+      } catch (fallbackError) {
+        // Final fallback below keeps the UI usable offline.
+      }
+    }
   }
+  return buildLocalDashboardFallback(atlData);
 };
 
 export const getClassAnalytics = async (className) => {
   const atlData = getLocalATLData();
-  if (atlData && Object.keys(atlData).length > 0) {
-    try {
-      const data = unwrap(await api.post("students/analytics/", { class: className, atlData }));
-      if (Array.isArray(data.students) && data.students.some((student) => student.overallScore !== null)) return data;
-    } catch (error) {
-      // GET fallback below still supports database-backed analytics.
-    }
-  }
-
   try {
-    const data = unwrap(await api.get("students/analytics/", { params: className ? { class: className } : {} }));
+    const data = normalizeClassAnalyticsPayload(unwrap(await api.get("students/analytics/", { params: className ? { class: className } : {} })));
     if (Array.isArray(data.students) && data.students.some((student) => student.overallScore !== null)) return data;
   } catch (error) {
-    // Page-level fallback handles empty analytics.
+    if (atlData && Object.keys(atlData).length > 0) {
+      try {
+        const data = normalizeClassAnalyticsPayload(unwrap(await api.post("students/analytics/", { class: className, atlData })));
+        if (Array.isArray(data.students) && data.students.some((student) => student.overallScore !== null)) return data;
+      } catch (fallbackError) {
+        // Page-level fallback handles empty analytics.
+      }
+    }
   }
   return buildLocalClassAnalytics(className, atlData);
 };

@@ -1,8 +1,8 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Sidebar from "./sidebar";
-import { allStudentsData } from "./dummyStudents";
-import { dummyATL, saveATLData } from "./dummyATL";
+import { allStudentsData } from "../dummyData/dummyStudents";
+import { dummyATL, saveATLData } from "../dummyData/dummyATL";
 import { getStudents, hydrateTopic, saveAssessment } from "../../services/atlApi";
 import { getRatingMeta, getScoreLevel, hydrateLabelRegistry, ratingOptions } from "../../services/labelRegistry";
 import { getSubjectTopicMapByLabel } from "../../services/topicCatalog";
@@ -376,15 +376,17 @@ export default function BatchInputATL() {
               </div>
               <button
                 type="button"
-                className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-2.5 text-sm font-bold text-emerald-700"
+                className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-2.5 text-sm font-black text-emerald-700 transition-all hover:bg-emerald-100"
               >
+                <span className="material-symbols-outlined text-[18px]">ios_share</span>
                 Export Excel
               </button>
               <button
                 onClick={handleSend}
-                className="rounded-xl bg-primary px-6 py-2.5 text-sm font-black text-white shadow-lg shadow-primary/20"
+                className="inline-flex items-center gap-2 rounded-xl bg-stone-950 px-6 py-2.5 text-sm font-black text-white shadow-lg shadow-stone-950/15 transition-all hover:bg-stone-800"
               >
-                Kirim Penilaian
+                <span className="material-symbols-outlined text-[18px]">save</span>
+                Simpan
               </button>
               </div>
             </div>
@@ -475,8 +477,9 @@ export default function BatchInputATL() {
                   </span>
                   <button
                     onClick={handleSaveDraft}
-                    className="rounded-xl border border-primary/30 bg-primary/10 px-5 py-2.5 text-sm font-black text-primary-hover transition hover:bg-primary hover:text-white"
+                    className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-5 py-2.5 text-sm font-black text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5"
                   >
+                    <span className="material-symbols-outlined text-[18px]">save</span>
                     Simpan Draft
                   </button>
                 </div>
@@ -732,16 +735,17 @@ export default function BatchInputATL() {
             <div className="flex items-center gap-3">
               <button
                 onClick={handleSaveDraft}
-                className="rounded-2xl border border-primary/25 bg-primary/5 px-6 py-3 text-sm font-semibold text-primary transition-all hover:border-primary/40 hover:bg-primary/10"
+                className="inline-flex items-center gap-2 rounded-2xl border border-stone-200 bg-white px-6 py-3 text-sm font-black text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5"
               >
+                <span className="material-symbols-outlined text-[18px]">save</span>
                 Simpan Draft
               </button>
               <button
                 onClick={handleSend}
-                className="inline-flex items-center gap-2 rounded-2xl bg-amber-500 px-6 py-3 text-sm font-bold text-stone-900 shadow-[0_16px_28px_rgba(245,158,11,0.24)] transition-all hover:bg-amber-400"
+                className="inline-flex items-center gap-2 rounded-2xl bg-stone-950 px-6 py-3 text-sm font-black text-white shadow-[0_16px_28px_rgba(15,23,42,0.22)] transition-all hover:bg-stone-800"
               >
-                <span className="material-symbols-outlined text-[18px]">send</span>
-                Submit All Assessment
+                <span className="material-symbols-outlined text-[18px]">save</span>
+                Simpan Penilaian
               </button>
             </div>
           </div>

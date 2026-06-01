@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "./sidebar";
 import { getDashboardAnalytics } from "../../services/atlApi";
+import { getATLDistributionTemplate, getNoDataLevel } from "../../services/labelRegistry";
 
 const emptyDashboard = {
   meta: { semester: "Semester 2 (2024/2025)", updatedAt: null },
@@ -16,27 +17,15 @@ const emptyDashboard = {
     needAttention: 0,
     strongestATL: "-",
     focusATL: "-",
-    level: { label: "No Data", color: "#a8a29e" },
+    level: getNoDataLevel(),
   },
-  systemRecap: [
-    { label: "Progress Penilaian", value: "0%", note: "Menunggu data penilaian tersimpan", icon: "tips_and_updates" },
-    { label: "Fokus Utama", value: "-", note: "Akan muncul setelah input ATL", icon: "emoji_objects" },
-    { label: "Siswa Perlu Perhatian", value: "0", note: "Belum ada siswa terdeteksi", icon: "person_alert" },
-    { label: "Update Terakhir", value: "-", note: "Sinkron dari localStorage/API", icon: "schedule" },
-  ],
   overviewCards: [
-    { label: "Cakupan Penilaian", value: "0%", note: "Data akan muncul setelah guru menyimpan penilaian ATL.", icon: "pie_chart", color: "blue" },
-    { label: "Total Siswa", value: "0", note: "Siswa aktif dalam proses penilaian semester ini.", icon: "groups", color: "amber" },
-    { label: "Penilaian Tersimpan", value: "0", note: "Penilaian ATL dari guru yang sudah tersimpan.", icon: "assignment_turned_in", color: "sky" },
-    { label: "Topik Aktif", value: "0", note: "Topik ATL yang digunakan dalam pembelajaran.", icon: "auto_stories", color: "violet" },
+    { label: "Cakupan Rubrik", value: "0%", note: "Persentase item rubrik yang sudah memiliki nilai.", icon: "fact_check", color: "blue" },
+    { label: "Siswa Dinilai", value: "0/0", note: "Jumlah siswa yang sudah memiliki minimal satu nilai ATL.", icon: "groups", color: "amber" },
+    { label: "Nilai Tersimpan", value: "0", note: "Total rating ATL yang tersimpan di database.", icon: "assignment_turned_in", color: "sky" },
+    { label: "Topik Aktif", value: "0", note: "Topik pembelajaran yang sudah memiliki assessment.", icon: "auto_stories", color: "violet" },
   ],
-  atlDistribution: [
-    { category: "Thinking Skills", score: 0, color: "#F6B21A" },
-    { category: "Communication Skills", score: 0, color: "#4F8DE8" },
-    { category: "Social Skills", score: 0, color: "#45B978" },
-    { category: "Self-Management Skills", score: 0, color: "#8D55D7" },
-    { category: "Research Skills", score: 0, color: "#14B8A6" },
-  ],
+  atlDistribution: getATLDistributionTemplate(),
   trend: [
     { label: "Minggu 1", score: 0 },
     { label: "Minggu 2", score: 0 },
@@ -78,6 +67,29 @@ const cardTone = {
   green: "bg-emerald-100 text-emerald-600",
 };
 
+const overviewTone = {
+  blue: {
+    card: "border-blue-100 bg-gradient-to-br from-blue-50 via-white to-blue-100/80 shadow-blue-100/70",
+    icon: "bg-blue-100 text-blue-600",
+    value: "text-blue-600",
+  },
+  amber: {
+    card: "border-amber-100 bg-gradient-to-br from-amber-50 via-white to-amber-100/80 shadow-amber-100/70",
+    icon: "bg-amber-100 text-amber-600",
+    value: "text-orange-500",
+  },
+  sky: {
+    card: "border-cyan-100 bg-gradient-to-br from-cyan-50 via-white to-cyan-100/80 shadow-cyan-100/70",
+    icon: "bg-cyan-100 text-cyan-600",
+    value: "text-cyan-600",
+  },
+  violet: {
+    card: "border-violet-100 bg-gradient-to-br from-violet-50 via-white to-violet-100/80 shadow-violet-100/70",
+    icon: "bg-violet-100 text-violet-600",
+    value: "text-violet-600",
+  },
+};
+
 const formatTime = (value) => {
   if (!value) return "Belum ada update";
   const date = new Date(value);
@@ -94,7 +106,6 @@ const mergeDashboardData = (data) => {
   if (!data?.summary) return emptyDashboard;
   const merged = { ...emptyDashboard, ...data, summary: { ...emptyDashboard.summary, ...(data.summary || {}) } };
   [
-    "systemRecap",
     "overviewCards",
     "atlDistribution",
     "trend",
@@ -108,16 +119,23 @@ const mergeDashboardData = (data) => {
   return merged;
 };
 
-const StatCard = ({ item }) => (
-  <div className="rounded-[1.35rem] border border-stone-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.045)]">
-    <div className={`flex size-12 items-center justify-center rounded-2xl ${cardTone[item.color] || "bg-amber-100 text-amber-600"}`}>
-      <span className="material-symbols-outlined text-[24px]">{item.icon}</span>
+const StatCard = ({ item }) => {
+  const tone = overviewTone[item.color] || overviewTone.amber;
+  return (
+    <div className={`rounded-[1.2rem] border p-5 shadow-[0_16px_36px_rgba(15,23,42,0.06)] ${tone.card}`}>
+      <div className="flex items-center gap-5">
+        <div className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${tone.icon}`}>
+          <span className="material-symbols-outlined text-[30px]">{item.icon}</span>
+        </div>
+        <div className="min-w-0">
+          <p className={`text-3xl font-black leading-none ${tone.value}`}>{item.value}</p>
+          <h3 className="mt-3 text-sm font-black leading-tight text-stone-950">{item.label}</h3>
+          <p className="mt-2 text-[11px] font-semibold leading-5 text-stone-700">{item.note}</p>
+        </div>
+      </div>
     </div>
-    <h3 className="mt-6 text-sm font-black text-stone-950">{item.label}</h3>
-    <p className="mt-2 text-xs font-semibold leading-5 text-stone-600">{item.note}</p>
-    <p className="mt-4 text-2xl font-black text-stone-950">{item.value}</p>
-  </div>
-);
+  );
+};
 
 const DonutChart = ({ rows }) => {
   let cursor = 0;
@@ -252,9 +270,9 @@ export default function Dashboard() {
           <div className="mx-auto flex max-w-[1180px] flex-col gap-7">
             <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
-                <p className="text-xs font-bold text-stone-400">Dashboard</p>
-                <h1 className="mt-3 text-3xl font-black tracking-tight text-stone-950">Selamat datang, Admin</h1>
-                <p className="mt-2 text-sm font-semibold text-stone-500">Berikut ringkasan penilaian ATL pada semester ini.</p>
+                <p className="text-xs font-bold text-stone-400">Dashboard ATL</p>
+                <h1 className="mt-3 text-3xl font-black tracking-tight text-stone-950">Monitoring Penilaian Siswa</h1>
+                <p className="mt-2 text-sm font-semibold text-stone-500">Pantau cakupan assessment, performa ATL, dan kelas yang membutuhkan tindak lanjut.</p>
               </div>
               <div className="flex items-center gap-4">
                 <button className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-bold text-stone-700 shadow-sm">
@@ -272,46 +290,23 @@ export default function Dashboard() {
               </div>
             </header>
 
-            <section className="grid gap-5 lg:grid-cols-[1.45fr_0.85fr]">
-              <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
-                <h2 className="flex items-center gap-2 text-base font-black text-stone-950">
-                  <span className="material-symbols-outlined text-primary">trending_up</span>
-                  Ringkasan Sistem
-                </h2>
-                <div className="mt-8 grid gap-5 md:grid-cols-4">
-                  {(dashboard.systemRecap || []).map((item) => (
-                    <div key={item.label} className="border-r border-stone-200 pr-4 last:border-r-0">
-                      <div className="flex size-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                        <span className="material-symbols-outlined text-[22px]">{item.icon}</span>
-                      </div>
-                      <p className="mt-4 text-xs font-black text-stone-950">{item.label}</p>
-                      <p className="mt-2 text-[11px] font-semibold leading-4 text-stone-500">{item.note}</p>
-                    </div>
-                  ))}
+            <section className="rounded-2xl border border-stone-200/70 bg-white px-6 py-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl text-amber-500 ring-1 ring-amber-200">
+                    <span className="material-symbols-outlined text-[24px]">fact_check</span>
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-black leading-tight text-stone-950">Gambaran Umum Penilaian</h2>
+                    <p className="mt-1 text-sm font-semibold text-stone-500">Ringkasan langsung dari data assessment, rubrik, siswa, dan topik aktif.</p>
+                  </div>
+                </div>
+                <div className="inline-flex w-fit items-center gap-2 rounded-full bg-stone-100 px-3 py-2 text-[11px] font-black text-stone-500">
+                  <span className="material-symbols-outlined text-[15px]">calendar_month</span>
+                  Update {formatTime(dashboard.meta?.updatedAt)}
                 </div>
               </div>
-
-              <div className="relative overflow-hidden rounded-[1.6rem] border border-amber-100 bg-gradient-to-br from-amber-50 via-white to-amber-100 p-6 shadow-[0_18px_50px_rgba(246,178,26,0.12)]">
-                <div className="relative z-10 max-w-[58%]">
-                  <h2 className="text-lg font-black leading-7 text-stone-950">Penilaian yang Bermakna, Pembelajaran yang Berkelanjutan.</h2>
-                  <p className="mt-4 text-xs font-semibold leading-5 text-stone-600">
-                    Gunakan data ATL untuk mendukung perkembangan siswa secara holistik.
-                  </p>
-                  <button className="mt-5 rounded-xl bg-primary px-5 py-3 text-xs font-black text-white shadow-[0_12px_24px_rgba(246,166,9,0.25)]">
-                    Lihat Insight
-                  </button>
-                </div>
-                <div className="absolute bottom-0 right-2 h-40 w-40 rounded-t-full bg-white/70" />
-                <div className="absolute bottom-8 right-9 flex size-24 items-center justify-center rounded-3xl bg-primary/15 text-primary">
-                  <span className="material-symbols-outlined text-6xl">query_stats</span>
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
-              <h2 className="text-lg font-black text-stone-950">Gambaran Umum Penilaian</h2>
-              <p className="mt-2 text-sm font-semibold text-stone-500">Ringkasan aktivitas dan data penilaian ATL secara keseluruhan.</p>
-              <div className="mt-7 grid gap-5 md:grid-cols-4">
+              <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
                 {(dashboard.overviewCards || []).map((item) => <StatCard key={item.label} item={item} />)}
               </div>
             </section>
@@ -358,20 +353,28 @@ export default function Dashboard() {
                 <h2 className="text-base font-black text-stone-950">Siswa Perlu Perhatian</h2>
                 <p className="mt-2 text-xs font-semibold text-stone-500">Siswa yang memerlukan pendampingan lebih lanjut.</p>
                 <div className="mt-5 space-y-4">
-                  {(dashboard.attentionStudents || []).map((student, index) => (
-                    <div key={student.id || index} className="flex items-center gap-3">
-                      <div className="flex size-9 items-center justify-center rounded-full bg-amber-100 text-xs font-black text-primary">
-                        {(student.name || "?").split(" ").map((part) => part[0]).slice(0, 2).join("")}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-black text-stone-900">{student.name}</p>
-                        <div className="mt-1 h-2 rounded-full bg-stone-100">
-                          <div className="h-full rounded-full bg-amber-300" style={{ width: `${student.score || 0}%` }} />
+                  {(dashboard.attentionStudents || []).length > 0 ? (
+                    (dashboard.attentionStudents || []).map((student, index) => (
+                      <div key={student.id || index} className="flex items-center gap-3">
+                        <div className="flex size-9 items-center justify-center rounded-full bg-amber-100 text-xs font-black text-primary">
+                          {(student.name || "?").split(" ").map((part) => part[0]).slice(0, 2).join("")}
                         </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-black text-stone-900">{student.name}</p>
+                          <div className="mt-1 h-2 rounded-full bg-stone-100">
+                            <div className="h-full rounded-full bg-amber-300" style={{ width: `${student.score || 0}%` }} />
+                          </div>
+                        </div>
+                        <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black text-primary">Perhatian</span>
                       </div>
-                      <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black text-primary">Perhatian</span>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center">
+                      <span className="material-symbols-outlined text-3xl text-stone-400">verified</span>
+                      <p className="mt-2 text-xs font-black text-stone-700">Belum ada siswa prioritas</p>
+                      <p className="mt-1 text-[11px] font-semibold text-stone-500">Data akan muncul setelah nilai ATL tersimpan.</p>
                     </div>
-                  ))}
+                  )}
                 </div>
                 <button className="mt-5 w-full rounded-xl border border-amber-200 px-4 py-3 text-xs font-black text-primary">Lihat Semua Siswa</button>
               </div>
@@ -387,6 +390,7 @@ export default function Dashboard() {
                       </div>
                       <div className="flex-1">
                         <p className="text-xs font-black text-stone-900">{teacher.name}</p>
+                        <p className="mt-0.5 text-[10px] font-semibold text-stone-500">{teacher.role || "Pengajar"} | {teacher.assessmentCount || 0} input</p>
                         <div className="mt-1 h-2 rounded-full bg-stone-100">
                           <div className="h-full rounded-full" style={{ width: `${teacher.progress}%`, backgroundColor: teacher.color }} />
                         </div>
@@ -404,18 +408,26 @@ export default function Dashboard() {
                 <h2 className="text-base font-black text-stone-950">Aktivitas Terbaru</h2>
                 <p className="mt-2 text-xs font-semibold text-stone-500">Aktivitas terbaru yang terjadi dalam sistem.</p>
                 <div className="mt-6 space-y-4">
-                  {(dashboard.recentActivities || []).map((activity, index) => (
-                    <div key={`${activity.title}-${index}`} className="flex items-center gap-3">
-                      <div className="flex size-9 items-center justify-center rounded-full bg-amber-100 text-primary">
-                        <span className="material-symbols-outlined text-lg">description</span>
+                  {(dashboard.recentActivities || []).length > 0 ? (
+                    (dashboard.recentActivities || []).map((activity, index) => (
+                      <div key={`${activity.title}-${index}`} className="flex items-center gap-3">
+                        <div className="flex size-9 items-center justify-center rounded-full bg-amber-100 text-primary">
+                          <span className="material-symbols-outlined text-lg">description</span>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-black text-stone-800">{activity.title}</p>
+                          <div className="mt-1 h-2 w-2/3 rounded-full bg-stone-100" />
+                        </div>
+                        <span className="text-[10px] font-bold text-stone-400">{formatTime(activity.time)}</span>
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-black text-stone-800">{activity.title}</p>
-                        <div className="mt-1 h-2 w-2/3 rounded-full bg-stone-100" />
-                      </div>
-                      <span className="text-[10px] font-bold text-stone-400">{formatTime(activity.time)}</span>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center">
+                      <span className="material-symbols-outlined text-3xl text-stone-400">history</span>
+                      <p className="mt-2 text-xs font-black text-stone-700">Belum ada aktivitas terbaru</p>
+                      <p className="mt-1 text-[11px] font-semibold text-stone-500">Aktivitas akan tercatat saat bobot atau nilai diperbarui.</p>
                     </div>
-                  ))}
+                  )}
                 </div>
                 <button className="mt-6 w-full rounded-xl border border-amber-200 px-4 py-3 text-xs font-black text-primary">Lihat Semua Aktivitas</button>
               </div>

@@ -11,28 +11,28 @@ export const fallbackLabelRegistry = {
   noDataLevel: { label: "No Data", color: "#A8A29E", tone: "stone", className: "bg-stone-100 text-stone-500", badgeClass: "bg-stone-100 text-stone-500", description: "No assessment data is available yet", count: 0 },
   atlCategories: {
     "Thinking Skills": { key: "thinking", label: "Thinking Skills", aliases: ["Thinking", "Critical Thinking"], icon: "psychology", color: "#0EA5E9", chipClass: "border-sky-200 bg-sky-50 text-sky-700", toneClass: "bg-sky-100 text-sky-700 ring-sky-200", textClass: "text-sky-700", bgClass: "bg-sky-50", borderClass: "border-sky-200", barClass: "from-sky-400 to-sky-600", dotClass: "bg-sky-500" },
-    "Research Skills": { key: "research", label: "Research Skills", aliases: ["Research"], icon: "menu_book", color: "#8B5CF6", chipClass: "border-violet-200 bg-violet-50 text-violet-700", toneClass: "bg-violet-100 text-violet-700 ring-violet-200", textClass: "text-violet-700", bgClass: "bg-violet-50", borderClass: "border-violet-200", barClass: "from-violet-400 to-violet-600", dotClass: "bg-violet-500" },
+    "Research Skills": { key: "research", label: "Research Skills", aliases: ["Research"], icon: "menu_book", color: "#F97316", chipClass: "border-orange-200 bg-orange-50 text-orange-700", toneClass: "bg-orange-100 text-orange-700 ring-orange-200", textClass: "text-orange-700", bgClass: "bg-orange-50", borderClass: "border-orange-200", barClass: "from-yellow-500 via-orange-500 to-red-600", dotClass: "bg-orange-500" },
     "Communication Skills": { key: "communication", label: "Communication Skills", aliases: ["Communication"], icon: "forum", color: "#D946EF", chipClass: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700", toneClass: "bg-fuchsia-100 text-fuchsia-700 ring-fuchsia-200", textClass: "text-fuchsia-700", bgClass: "bg-fuchsia-50", borderClass: "border-fuchsia-200", barClass: "from-fuchsia-400 to-fuchsia-600", dotClass: "bg-fuchsia-500" },
-    "Social Skills": { key: "social", label: "Social Skills", aliases: ["Social", "Collaboration"], icon: "groups", color: "#84CC16", chipClass: "border-lime-200 bg-lime-50 text-lime-700", toneClass: "bg-lime-100 text-lime-700 ring-lime-200", textClass: "text-lime-700", bgClass: "bg-lime-50", borderClass: "border-lime-200", barClass: "from-lime-400 to-lime-600", dotClass: "bg-lime-500" },
-    "Self-Management Skills": { key: "self-management", label: "Self-Management Skills", aliases: ["Self-Management", "Self Management"], icon: "work", color: "#DC2626", chipClass: "border-red-200 bg-red-50 text-red-700", toneClass: "bg-red-100 text-red-700 ring-red-200", textClass: "text-red-700", bgClass: "bg-red-50", borderClass: "border-red-200", barClass: "from-red-400 to-red-600", dotClass: "bg-red-500" },
+    "Social Skills": { key: "social", label: "Social Skills", aliases: ["Social", "Collaboration"], icon: "groups", color: "#10B981", chipClass: "border-emerald-200 bg-emerald-50 text-emerald-700", toneClass: "bg-emerald-100 text-emerald-700 ring-emerald-200", textClass: "text-emerald-700", bgClass: "bg-emerald-50", borderClass: "border-emerald-200", barClass: "from-emerald-400 to-emerald-600", dotClass: "bg-emerald-500" },
+    "Self-Management Skills": { key: "self-management", label: "Self-Management Skills", aliases: ["Self-Management", "Self Management"], icon: "work", color: "#92400E", chipClass: "border-amber-300 bg-amber-50 text-amber-900", toneClass: "bg-amber-100 text-amber-900 ring-amber-200", textClass: "text-amber-900", bgClass: "bg-amber-50", borderClass: "border-amber-300", barClass: "from-amber-700 to-orange-900", dotClass: "bg-amber-800" },
   },
   subskills: {
-    "Critical Thingking": { category: "Thinking Skills", icon: "psychology_alt", bg: "bg-[#00E5E5]", bar: "bg-[#00E5E5]", colorHex: "rgb(0, 229, 229)" },
-    "Critical Thinking": { category: "Thinking Skills", canonical: "Critical Thingking", icon: "psychology_alt", bg: "bg-[#00E5E5]", bar: "bg-[#00E5E5]", colorHex: "rgb(0, 229, 229)" },
-    "Creative Thingking": { category: "Thinking Skills", icon: "lightbulb", bg: "bg-[#0B0787]", bar: "bg-[#0B0787]", colorHex: "rgb(11, 7, 135)" },
-    "Creative Thinking": { category: "Thinking Skills", canonical: "Creative Thingking", icon: "lightbulb", bg: "bg-[#0B0787]", bar: "bg-[#0B0787]", colorHex: "rgb(11, 7, 135)" },
-    InformationTransfer: { category: "Thinking Skills", icon: "sync_alt", bg: "bg-[#1100FF]", bar: "bg-[#1100FF]", colorHex: "rgb(17, 0, 255)" },
-    "Reflection / Metacognitive": { category: "Thinking Skills", icon: "neurology", bg: "bg-[#4B8DBB]", bar: "bg-[#4B8DBB]", colorHex: "rgb(75, 141, 187)" },
-    "Textual Literacy": { category: "Research Skills", icon: "article", bg: "bg-red-600", bar: "bg-red-600", colorHex: "rgb(243, 147, 73)" },
-    "Media Literacy": { category: "Research Skills", icon: "perm_media", bg: "bg-red-500", bar: "bg-red-500", colorHex: "rgb(243, 0, 0)" },
-    "Ethical use of information": { category: "Research Skills", icon: "shield", bg: "bg-red-700", bar: "bg-red-700", colorHex: "rgb(93, 2, 2)" },
-    "Exchanging-information": { category: "Communication Skills", icon: "chat_bubble", bg: "bg-purple-600", bar: "bg-purple-600", colorHex: "rgb(128, 9, 240)" },
-    "Literacy skills": { category: "Communication Skills", icon: "menu_book", bg: "bg-purple-500", bar: "bg-purple-500", colorHex: "rgb(168, 85, 247)" },
-    "ICT skills": { category: "Communication Skills", icon: "devices", bg: "bg-purple-700", bar: "bg-purple-700", colorHex: "rgb(41, 3, 74)" },
-    "Interpersonal relationships": { category: "Social Skills", icon: "groups", bg: "bg-green-600", bar: "bg-green-600", colorHex: "rgb(22, 163, 74)" },
-    "Social-emotional intelligence": { category: "Social Skills", icon: "diversity_3", bg: "bg-green-500", bar: "bg-green-500", colorHex: "rgb(34, 197, 94)" },
-    "Organization skills": { category: "Self-Management Skills", icon: "event_note", bg: "bg-orange-600", bar: "bg-orange-600", colorHex: "rgb(232, 248, 6)" },
-    "State of Mind": { category: "Self-Management Skills", icon: "self_improvement", bg: "bg-orange-500", bar: "bg-orange-500", colorHex: "rgb(219, 245, 136)" },
+    "Critical Thingking": { category: "Thinking Skills", icon: "psychology_alt", bg: "bg-sky-500", bar: "bg-sky-500", colorHex: "#0ea5e9" },
+    "Critical Thinking": { category: "Thinking Skills", canonical: "Critical Thingking", icon: "psychology_alt", bg: "bg-sky-500", bar: "bg-sky-500", colorHex: "#0ea5e9" },
+    "Creative Thingking": { category: "Thinking Skills", icon: "lightbulb", bg: "bg-blue-600", bar: "bg-blue-600", colorHex: "#2563eb" },
+    "Creative Thinking": { category: "Thinking Skills", canonical: "Creative Thingking", icon: "lightbulb", bg: "bg-blue-600", bar: "bg-blue-600", colorHex: "#2563eb" },
+    InformationTransfer: { category: "Thinking Skills", icon: "sync_alt", bg: "bg-indigo-500", bar: "bg-indigo-500", colorHex: "#6366f1" },
+    "Reflection / Metacognitive": { category: "Thinking Skills", icon: "neurology", bg: "bg-cyan-600", bar: "bg-cyan-600", colorHex: "#0891b2" },
+    "Textual Literacy": { category: "Research Skills", icon: "article", bg: "bg-yellow-500", bar: "bg-yellow-500", colorHex: "#eab308" },
+    "Media Literacy": { category: "Research Skills", icon: "perm_media", bg: "bg-orange-500", bar: "bg-orange-500", colorHex: "#f97316" },
+    "Ethical use of information": { category: "Research Skills", icon: "shield", bg: "bg-red-600", bar: "bg-red-600", colorHex: "#dc2626" },
+    "Exchanging Information": { category: "Communication Skills", icon: "chat_bubble", bg: "bg-purple-500", bar: "bg-purple-500", colorHex: "#a855f7" },
+    "Literacy skills": { category: "Communication Skills", icon: "menu_book", bg: "bg-fuchsia-500", bar: "bg-fuchsia-500", colorHex: "#d946ef" },
+    "ICT skills": { category: "Communication Skills", icon: "devices", bg: "bg-pink-500", bar: "bg-pink-500", colorHex: "#ec4899" },
+    "Interpersonal relationships": { category: "Social Skills", icon: "groups", bg: "bg-emerald-500", bar: "bg-emerald-500", colorHex: "#10b981" },
+    "Social-emotional intelligence": { category: "Social Skills", icon: "diversity_3", bg: "bg-green-600", bar: "bg-green-600", colorHex: "#16a34a" },
+    "Organization skills": { category: "Self-Management Skills", icon: "event_note", bg: "bg-amber-800", bar: "bg-amber-800", colorHex: "#92400e" },
+    "State of Mind": { category: "Self-Management Skills", icon: "self_improvement", bg: "bg-orange-800", bar: "bg-orange-800", colorHex: "#9a3412" },
   },
   subjects: {
     singing: { label: "Singing", aliases: ["Singing"], icon: "music_note", color: "#DC2626", chipClass: "border-red-200 bg-red-50 text-red-700" },
@@ -91,15 +91,104 @@ export const getScoreLevel = (score) => {
   return (registry.scoreLevels || fallbackLabelRegistry.scoreLevels).find((level) => value >= Number(level.min || 0)) || fallbackLabelRegistry.scoreLevels.at(-1);
 };
 
+export const getNoDataLevel = () => registry.noDataLevel || fallbackLabelRegistry.noDataLevel;
+
 export const getATLCategoryMeta = (name) => {
   const normalized = normalizeATLCategory(name);
   return registry.atlCategories?.[normalized] || fallbackLabelRegistry.atlCategories["Thinking Skills"];
 };
 
-export const getSubskillMeta = (name) => {
+const parseColorChannels = (color) => {
+  const value = String(color || "").trim();
+  const rgb = value.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/i);
+  if (rgb) return rgb.slice(1).map(Number);
+  const hex = value.match(/^#?([a-f0-9]{6})$/i);
+  if (hex) {
+    const raw = hex[1];
+    return [0, 2, 4].map((offset) => parseInt(raw.slice(offset, offset + 2), 16));
+  }
+  return [245, 158, 11];
+};
+
+const alphaColor = (color, alpha = 0.12) => {
+  const [r, g, b] = parseColorChannels(color);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const readableTextColor = (color) => {
+  const [r, g, b] = parseColorChannels(color);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.68 ? "#0F172A" : "#FFFFFF";
+};
+
+export const getSubskillMeta = (name, index = 0) => {
+  const fallbackTones = [
+    { icon: "auto_awesome", bg: "bg-amber-500", bar: "bg-amber-500", colorHex: "#F59E0B" },
+    { icon: "psychology", bg: "bg-violet-500", bar: "bg-violet-500", colorHex: "#8B5CF6" },
+    { icon: "groups", bg: "bg-green-500", bar: "bg-green-500", colorHex: "#22C55E" },
+    { icon: "business_center", bg: "bg-red-500", bar: "bg-red-500", colorHex: "#EF4444" },
+  ];
   const subskill = registry.subskills?.[name] || fallbackLabelRegistry.subskills[name] || {};
   const category = getATLCategoryMeta(subskill.category || name);
-  return { ...category, ...subskill, categoryName: subskill.category || category.label };
+  const fallback = fallbackTones[index % fallbackTones.length];
+  const colorHex = subskill.colorHex || fallback.colorHex;
+  const softBg = alphaColor(colorHex, 0.14);
+  const softBorder = alphaColor(colorHex, 0.36);
+  return {
+    ...category,
+    ...fallback,
+    ...subskill,
+    colorHex,
+    categoryName: subskill.category || category.label,
+    chipClass: "border",
+    chipStyle: {
+      borderColor: softBorder,
+      backgroundColor: softBg,
+      color: colorHex,
+    },
+    solidStyle: {
+      backgroundColor: colorHex,
+      color: readableTextColor(colorHex),
+    },
+    softStyle: {
+      borderColor: softBorder,
+      backgroundColor: softBg,
+      color: colorHex,
+    },
+  };
+};
+
+export const getSubskillColorHex = (name, index = 0) => getSubskillMeta(name, index).colorHex;
+
+export const getATLDistributionTemplate = () => (
+  (registry.atlCategoryOrder || fallbackLabelRegistry.atlCategoryOrder).map((category) => {
+    const meta = getATLCategoryMeta(category);
+    return { category: meta.label || category, score: 0, color: meta.color };
+  })
+);
+
+export const getScoreDistributionConfig = (includeNoData = true) => {
+  const rows = (registry.scoreLevels || fallbackLabelRegistry.scoreLevels).map((level) => ({
+    key: level.label,
+    label: level.label,
+    color: level.color,
+    className: level.className,
+    badgeClass: level.badgeClass,
+  }));
+  return includeNoData ? [...rows, { key: getNoDataLevel().label, ...getNoDataLevel() }] : rows;
+};
+
+export const normalizeScoreBand = (label) => {
+  const legacyMap = {
+    "Sangat Baik": "Excellent",
+    Baik: "Good",
+    Cukup: "Average",
+    Kurang: "Low",
+    "Belum Dinilai": getNoDataLevel().label,
+    "-": getNoDataLevel().label,
+    "Not Assessed": getNoDataLevel().label,
+  };
+  return legacyMap[label] || label || getNoDataLevel().label;
 };
 
 export const getSubjectMeta = (value) => {

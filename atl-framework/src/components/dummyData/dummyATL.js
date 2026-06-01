@@ -15,7 +15,7 @@ const baseATL = {
   singing_christmas_carol: [
     item("Creating", "Role Play & Musical Contribution", ["Thinking Skills", "Communication Skills"], [
       "Interpersonal relationships",
-      "Exchanging-information",
+      "Exchanging Information",
       "Organization skills",
       "Reflection / Metacognitive",
     ], {
@@ -40,7 +40,7 @@ const baseATL = {
     item("Creating", "Ensemble Balance & Dynamics", ["Social Skills", "Communication Skills"], [
       "Interpersonal relationships",
       "Social-emotional intelligence",
-      "Exchanging-information",
+      "Exchanging Information",
     ], {
       NFI: "No awareness of group sound or control.",
       PTE: "Difficulty controlling volume.",
@@ -96,7 +96,7 @@ const baseATL = {
       EE: "Maintains accurate harmony, adjusts independently, and strengthens the group sound.",
     }),
     item("Choir Performance", "Performance Expression", ["Communication Skills", "Thinking Skills"], [
-      "Exchanging-information",
+      "Exchanging Information",
       "Literacy skills",
       "Creative Thingking",
     ], {
@@ -166,7 +166,7 @@ const baseATL = {
     }),
     item("Energy Investigation", "Collaboration & Communication", ["Social Skills", "Communication Skills"], [
       "Interpersonal relationships",
-      "Exchanging-information",
+      "Exchanging Information",
       "ICT skills",
     ], {
       NFI: "Does not contribute to the group investigation or discussion.",
@@ -212,7 +212,7 @@ const baseATL = {
     item("Solar System Inquiry", "Collaborative Inquiry", ["Social Skills", "Communication Skills"], [
       "Interpersonal relationships",
       "Social-emotional intelligence",
-      "Exchanging-information",
+      "Exchanging Information",
     ], {
       NFI: "Does not participate in group research or model creation.",
       PTE: "Contributes minimally and waits for others to complete tasks.",

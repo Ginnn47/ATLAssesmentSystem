@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import Sidebar from "./sidebar";
-import { allStudentsData } from "./dummyStudents"; // Import data siswa
+import { allStudentsData } from "../dummyData/dummyStudents"; // Import data siswa
 import { getClassAnalytics } from "../../services/atlApi";
 import { getATLCategoryMeta, getScoreLevel, getSubjectMeta, hydrateLabelRegistry, normalizeATLCategory } from "../../services/labelRegistry";
 
@@ -14,6 +14,15 @@ const getSkillTone = (category) => {
 };
 
 const getSubjectTone = (subject = "") => getSubjectMeta(subject).chipClass || "text-violet-700 bg-violet-50 border-violet-200";
+
+const FormulaHint = ({ text }) => (
+  <span className="group relative inline-flex">
+    <span className="material-symbols-outlined cursor-help text-[16px] text-stone-400 transition group-hover:text-primary">info</span>
+    <span className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 hidden w-72 -translate-x-1/2 rounded-xl border border-stone-200 bg-white p-3 text-[11px] font-semibold leading-5 text-stone-700 shadow-xl group-hover:block">
+      {text}
+    </span>
+  </span>
+);
 
 const detailCategoryConfig = [
   { label: "Thinking Skills", aliases: ["Thinking", "Thinking Skills"], icon: getATLCategoryMeta("Thinking Skills").icon },
@@ -50,7 +59,7 @@ const buildATLDetailRows = (student) => {
   const atlData = readLocalATLData();
   const studentAssessments = atlData.savedAssessments?.[String(student?.id)] || {};
   return detailCategoryConfig.map((config) => {
-    const matched = scores.find((item) => config.aliases.includes(item.category));
+    const matched = scores.find((item) => config.aliases.includes(normalizeATLCategory(item.category)));
     const strengthScore = config.aliases.includes(student?.strength) ? parsePercent(student?.strengthValue) : 0;
     const focusScore = config.aliases.includes(student?.focus) ? parsePercent(student?.focusValue) : 0;
     const score = matched?.score ?? (strengthScore || focusScore || 0);
@@ -198,6 +207,11 @@ export default function StudManage() {
   const distribution = classAnalytics.distribution;
   const dominantCategory = classAnalytics.dominantCategory;
   const topFocus = classAnalytics.topFocus;
+  const categoryAverageRows = detailCategoryConfig.map((config) => {
+    const matched = (classAnalytics.categoryAverages || []).find((item) => normalizeATLCategory(item.category) === config.label);
+    return { category: config.label, score: Number(matched?.score || 0) };
+  });
+  const hasCategoryAverage = categoryAverageRows.some((item) => item.score > 0);
 
   const totalStudents = students.length;
   const assessedStudents = classAnalytics.assessedCount;
@@ -490,7 +504,10 @@ export default function StudManage() {
                                             <div className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${row.tone.bar} text-white shadow-md`}>
                                               <span className="material-symbols-outlined text-[20px]">{row.icon}</span>
                                             </div>
-                                            <p className="min-h-[34px] text-xs font-black leading-4 text-stone-900">{row.label}</p>
+                                            <div className="flex min-h-[34px] items-start justify-between gap-2">
+                                              <p className="text-xs font-black leading-4 text-stone-900">{row.label}</p>
+                                              <FormulaHint text={`Rumus: skor ${row.label} adalah rata-rata nilai indikator rubric yang masuk kategori ini. Level rubric dikonversi ke angka: NFI=10, PTE=30, DE=50, ME=70, EE=90. ${row.sourceText}`} />
+                                            </div>
                                             <div className="mt-3 flex items-center justify-between">
                                               <span className={`text-2xl font-black ${row.tone.text}`}>{row.score}</span>
                                               <span className="text-[10px] font-black uppercase tracking-widest text-stone-400">Score</span>
@@ -514,7 +531,10 @@ export default function StudManage() {
                                                   <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${getSubjectTone(row.subject)}`}>
                                                     {row.subject}
                                                   </span>
-                                                  <h4 className="mt-1 truncate text-sm font-black capitalize text-stone-950">{row.topic}</h4>
+                                                  <div className="mt-1 flex items-center gap-2">
+                                                    <h4 className="truncate text-sm font-black capitalize text-stone-950">{row.topic}</h4>
+                                                    <FormulaHint text={`Rumus nilai topik: rata-rata skor semua indikator rubric yang sudah dinilai pada subtopik ini. Level rubric dikonversi ke angka NFI=10 sampai EE=90.`} />
+                                                  </div>
                                                   <p className="mt-2 text-xs font-semibold text-stone-500">{row.assessedItems || 0} indikator ternilai</p>
                                                 </div>
                                                 <div className="text-right">
@@ -633,15 +653,21 @@ export default function StudManage() {
                     </div>
 
                     <div className="mt-5 rounded-2xl bg-white p-5 ring-1 ring-stone-200">
-                      <h3 className="text-lg font-bold text-stone-900">Distribusi ATL Skills</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-bold text-stone-900">Distribusi ATL Skills</h3>
+                        <FormulaHint text="Bagian ini selalu diringkas menjadi 5 kategori resmi ATL. Alias lama seperti Communication atau Self-Management digabung ke Communication Skills dan Self-Management Skills." />
+                      </div>
                       <div className="mt-5 space-y-4">
-                        {classAnalytics.categoryAverages.length > 0 ? (
-                          classAnalytics.categoryAverages.map((item) => {
+                        {hasCategoryAverage ? (
+                          categoryAverageRows.map((item) => {
                             const tone = getSkillTone(item.category);
                             return (
                               <div key={item.category}>
                                 <div className="mb-2 flex items-center justify-between">
-                                  <span className="text-sm font-semibold text-stone-700">{item.category}</span>
+                                  <span className="inline-flex items-center gap-2 text-sm font-semibold text-stone-700">
+                                    {item.category}
+                                    <FormulaHint text={`Rumus: ${item.category} = rata-rata skor siswa pada indikator yang masuk kategori ini. Semua subskill/alias dinormalisasi ke 5 kategori ATL resmi.`} />
+                                  </span>
                                   <span className={`text-sm font-bold ${tone.text}`}>{item.score}%</span>
                                 </div>
                                 <div className="h-2 rounded-full bg-stone-200">

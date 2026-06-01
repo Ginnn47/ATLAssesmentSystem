@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import campusBuildingImage from "../../assets/Cita_Hati_High_School_East_Campus_Building.jpg";
 import schoolLogo from "../../assets/Cita_Hati_Christian_School_Logo.jpeg";
+import { loginUser } from "../../services/atlApi";
 
 
 export default function Login() {
@@ -10,11 +11,21 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
-    console.log({ username, password, rememberMe });
-    navigate("/dashboard");
+    setError("");
+    setIsSubmitting(true);
+    try {
+      await loginUser({ username, password });
+      navigate("/dashboard");
+    } catch (loginError) {
+      setError("Username atau password tidak valid.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -186,13 +197,19 @@ export default function Login() {
 
                 <button
                   type="submit"
+                  disabled={isSubmitting}
                   className="group inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-6 py-4 font-body text-sm font-semibold text-stone-950 shadow-[0_18px_35px_rgba(234,179,8,0.3)] transition duration-200 hover:-translate-y-0.5 hover:bg-secondary hover:shadow-[0_24px_40px_rgba(203,172,4,0.35)] active:translate-y-0"
                 >
-                  <span>Masuk</span>
+                  <span>{isSubmitting ? "Memproses..." : "Masuk"}</span>
                   <span className="material-symbols-outlined text-[18px] transition group-hover:translate-x-1">
                     arrow_forward
                   </span>
                 </button>
+                {error && (
+                  <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                    {error}
+                  </p>
+                )}
               </div>
             </form>
 

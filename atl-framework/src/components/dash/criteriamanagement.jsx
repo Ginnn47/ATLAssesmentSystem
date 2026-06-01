@@ -1,38 +1,19 @@
 import React, { useEffect, useState } from "react";
-import { dummyATL, saveATLData } from "./dummyATL";
+import { dummyATL, saveATLData } from "../dummyData/dummyATL";
 import { createContext, createCriterion, deleteCriterion, getATLHierarchy, getCriteria, updateCriterion } from "../../services/atlApi";
+import { getATLCategoryMeta, getSubskillMeta } from "../../services/labelRegistry";
 import { addCustomSubtopic, getSubjectData } from "../../services/topicCatalog";
 
-// ATL Icons and Colors
-const atlConfig = {
-  Thinking: { icon: "psychology", color: "bg-blue-100 text-blue-700", bgLight: "bg-blue-50" },
-  Communication: { icon: "chat", color: "bg-purple-100 text-purple-700", bgLight: "bg-purple-50" },
-  Social: { icon: "group", color: "bg-green-100 text-green-700", bgLight: "bg-green-50" },
-  "Self-Management": { icon: "self_improvement", color: "bg-orange-100 text-orange-700", bgLight: "bg-orange-50" },
-  Research: { icon: "explore", color: "bg-red-100 text-red-700", bgLight: "bg-red-50" },
-  "Thinking Skills": { icon: "psychology", color: "bg-blue-100 text-blue-700", bgLight: "bg-blue-50" },
-  "Communication Skills": { icon: "chat", color: "bg-purple-100 text-purple-700", bgLight: "bg-purple-50" },
-  "Social Skills": { icon: "group", color: "bg-green-100 text-green-700", bgLight: "bg-green-50" },
-  "Self-Management Skills": { icon: "self_improvement", color: "bg-orange-100 text-orange-700", bgLight: "bg-orange-50" },
-  "Research Skills": { icon: "explore", color: "bg-red-100 text-red-700", bgLight: "bg-red-50" },
-  "Critical Thingking": { icon: "psychology_alt", color: "bg-[#00E5E5]/10 text-[#008C8C]", bgLight: "bg-[#00E5E5]/10" },
-  "Critical Thinking": { icon: "psychology_alt", color: "bg-[#00E5E5]/10 text-[#008C8C]", bgLight: "bg-[#00E5E5]/10" },
-  "Creative Thingking": { icon: "lightbulb", color: "bg-[#0B0787]/10 text-[#0B0787]", bgLight: "bg-[#0B0787]/10" },
-  "Creative Thinking": { icon: "lightbulb", color: "bg-[#0B0787]/10 text-[#0B0787]", bgLight: "bg-[#0B0787]/10" },
-  InformationTransfer: { icon: "sync_alt", color: "bg-[#1100FF]/10 text-[#1100FF]", bgLight: "bg-[#1100FF]/10" },
-  "Reflection / Metacognitive": { icon: "neurology", color: "bg-[#4B8DBB]/10 text-[#2F6F9F]", bgLight: "bg-[#4B8DBB]/10" },
-  "Textual Literacy": { icon: "article", color: "bg-red-100 text-red-700", bgLight: "bg-red-50" },
-  "Media Literacy": { icon: "perm_media", color: "bg-red-100 text-red-700", bgLight: "bg-red-50" },
-  "Ethical use of information": { icon: "shield", color: "bg-red-100 text-red-700", bgLight: "bg-red-50" },
-  "Exchanging-information": { icon: "chat_bubble", color: "bg-purple-100 text-purple-700", bgLight: "bg-purple-50" },
-  "Literacy skills": { icon: "menu_book", color: "bg-purple-100 text-purple-700", bgLight: "bg-purple-50" },
-  "ICT skills": { icon: "devices", color: "bg-purple-100 text-purple-700", bgLight: "bg-purple-50" },
-  "Interpersonal relationships": { icon: "groups", color: "bg-green-100 text-green-700", bgLight: "bg-green-50" },
-  "Social-emotional intelligence": { icon: "diversity_3", color: "bg-green-100 text-green-700", bgLight: "bg-green-50" },
-  "Organization skills": { icon: "event_note", color: "bg-orange-100 text-orange-700", bgLight: "bg-orange-50" },
-  "State of Mind": { icon: "self_improvement", color: "bg-orange-100 text-orange-700", bgLight: "bg-orange-50" },
-};
 const fallbackAtlConfig = { icon: "label", color: "bg-stone-100 text-stone-700", bgLight: "bg-stone-50" };
+
+const toATLConfig = (meta = fallbackAtlConfig) => ({
+  icon: meta.icon || fallbackAtlConfig.icon,
+  color: meta.chipClass || meta.toneClass || fallbackAtlConfig.color,
+  bgLight: meta.bgClass || fallbackAtlConfig.bgLight,
+});
+
+const getCategoryConfig = (categoryName) => toATLConfig(getATLCategoryMeta(categoryName));
+const getSubskillConfig = (subskillName, index = 0) => toATLConfig(getSubskillMeta(subskillName, index));
 
 export default function criteriamanagement() {
   const subjectStyles = {
@@ -651,19 +632,22 @@ export default function criteriamanagement() {
 
               {/* ATL Tags with Icons */}
               <div className="mb-4 flex flex-wrap gap-2">
-                {getCriteriaCategoryNames(criteria).map((categoryName) => (
-                  <span
-                    key={categoryName}
-                    title={getCriteriaSubskillNames(criteria).join(", ")}
-                    className={`group relative inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${(atlConfig[categoryName] || fallbackAtlConfig).color}`}
-                  >
-                    <span className="material-symbols-outlined text-sm">{(atlConfig[categoryName] || fallbackAtlConfig).icon}</span>
-                    {categoryName}
-                    <span className="pointer-events-none absolute left-0 top-full z-20 mt-2 hidden w-64 rounded-xl border border-stone-200 bg-white p-3 text-[11px] font-semibold leading-5 text-stone-700 shadow-xl group-hover:block">
-                      {getCriteriaSubskillNames(criteria).join(", ")}
+                {getCriteriaCategoryNames(criteria).map((categoryName) => {
+                  const config = getCategoryConfig(categoryName);
+                  return (
+                    <span
+                      key={categoryName}
+                      title={getCriteriaSubskillNames(criteria).join(", ")}
+                      className={`group relative inline-flex items-center gap-1.5 rounded-xl border px-2 py-2 text-[9px] font-black ${config.color}`}
+                    >
+                      <span className="material-symbols-outlined text-[15px]">{config.icon}</span>
+                      {categoryName}
+                      <span className="pointer-events-none absolute left-0 top-full z-20 mt-2 hidden w-64 rounded-xl border border-stone-200 bg-white p-3 text-[12px] font-semibold leading-5 text-stone-700 shadow-xl group-hover:block">
+                        {getCriteriaSubskillNames(criteria).join(", ")}
+                      </span>
                     </span>
-                  </span>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Level Preview */}
@@ -770,7 +754,7 @@ export default function criteriamanagement() {
               <div className="grid gap-3 md:grid-cols-5">
                 {atlHierarchy.map((category) => {
                   const active = (formData.categoryIds || []).map(String).includes(String(category.id));
-                  const config = atlConfig[category.name] || fallbackAtlConfig;
+                  const config = getCategoryConfig(category.name);
 
                   return (
                     <button
@@ -804,7 +788,7 @@ export default function criteriamanagement() {
                 {selectedCategorySubskills.map((subskill) => {
                   const active = (formData.subskillIds || []).map(String).includes(String(subskill.id));
                   const parentCategory = findCategoryForSubskill(subskill.id);
-                  const config = atlConfig[subskill.name] || atlConfig[parentCategory?.name] || fallbackAtlConfig;
+                  const config = getSubskillConfig(subskill.name) || getCategoryConfig(parentCategory?.name);
 
                   return (
                     <button

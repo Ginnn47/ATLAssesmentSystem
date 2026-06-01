@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Sidebar from "./sidebar";
-import { dummyATL, saveATLData } from "./dummyATL";
-import { allStudentsData } from "./dummyStudents";
+import { dummyATL, saveATLData } from "../dummyData/dummyATL";
+import { allStudentsData } from "../dummyData/dummyStudents";
 import { getStudents, hydrateTopic, saveAssessment } from "../../services/atlApi";
 import { getATLCategoryMeta, getRatingMeta, getScoreLevel, getSubjectMeta, hydrateLabelRegistry, ratingOptions } from "../../services/labelRegistry";
 import { getTopicsForSubjectLabel } from "../../services/topicCatalog";
@@ -19,6 +19,14 @@ const normalizeRatingLabel = (label) =>
   label === "Need Improvement" ? "Need Further Improvement" : label;
 
 const getScoreCategory = getScoreLevel;
+
+const ratingMeaning = {
+  NFI: "Belum menunjukkan perilaku yang diharapkan dan masih membutuhkan bantuan intensif.",
+  PTE: "Mulai mencoba, tetapi performa masih belum stabil dan perlu banyak arahan.",
+  DE: "Sedang berkembang; siswa sudah berusaha namun konsistensinya masih perlu dilatih.",
+  ME: "Sudah memenuhi ekspektasi utama pada kriteria ini secara cukup konsisten.",
+  EE: "Melebihi ekspektasi; performa tampak kuat, mandiri, dan konsisten.",
+};
 
 const getLevelTone = (code) => {
   const meta = getRatingMeta(code);
@@ -51,7 +59,9 @@ export default function DetailedInputATL() {
   const [ratings, setRatings] = useState({});
   const [note, setNote] = useState("");
   const [topicVersion, setTopicVersion] = useState(0);
+  const [defaultSaved, setDefaultSaved] = useState(false);
   const [, setDataVersion] = useState(0);
+  const skipSubjectResetRef = useRef(false);
 
   const topics = useMemo(() => getTopicsForSubjectLabel(selectedSubject), [selectedSubject, topicVersion]);
   const selectedTopic = topics[selectedTopicIndex] || topics[0] || { id: "", label: "Pilih Topik" };
@@ -63,6 +73,20 @@ export default function DetailedInputATL() {
 
   useEffect(() => {
     hydrateLabelRegistry().then(() => setDataVersion((version) => version + 1));
+    const savedDefault = localStorage.getItem("atl_detailed_filter_default");
+    if (savedDefault) {
+      try {
+        const parsed = JSON.parse(savedDefault);
+        if (parsed.className && classOptions.includes(parsed.className)) setSelectedClass(parsed.className);
+        if (parsed.subject) {
+          skipSubjectResetRef.current = true;
+          setSelectedSubject(parsed.subject);
+        }
+        if (Number.isFinite(Number(parsed.topicIndex))) setSelectedTopicIndex(Number(parsed.topicIndex));
+      } catch {
+        localStorage.removeItem("atl_detailed_filter_default");
+      }
+    }
     const syncData = () => {
       const saved = localStorage.getItem("atl_framework_data");
       if (saved) Object.assign(dummyATL, JSON.parse(saved));
@@ -81,7 +105,13 @@ export default function DetailedInputATL() {
     };
   }, []);
 
-  useEffect(() => setSelectedTopicIndex(0), [selectedSubject]);
+  useEffect(() => {
+    if (skipSubjectResetRef.current) {
+      skipSubjectResetRef.current = false;
+      return;
+    }
+    setSelectedTopicIndex(0);
+  }, [selectedSubject]);
   useEffect(() => setSelectedCriterionIndex(0), [dataKey]);
   useEffect(() => {
     let cancelled = false;
@@ -165,6 +195,20 @@ export default function DetailedInputATL() {
     return true;
   };
 
+  const saveDefaultSelection = () => {
+    localStorage.setItem(
+      "atl_detailed_filter_default",
+      JSON.stringify({
+        className: selectedClass,
+        subject: selectedSubject,
+        topicIndex: selectedTopicIndex,
+        topicId: selectedTopic.id,
+      })
+    );
+    setDefaultSaved(true);
+    window.setTimeout(() => setDefaultSaved(false), 1800);
+  };
+
   const progress = criteria.length ? Math.round((scoredCriteriaCount / criteria.length) * 100) : 0;
   const dominantWeight = criterion ? Math.max(...(criterion.atl || []).map((atl) => getCriterionWeight(weights, criterion.kriteria, atl)), 0) : 0;
   const scoreCategory = getScoreCategory(calculatedScore);
@@ -199,8 +243,22 @@ export default function DetailedInputATL() {
                     Batch
                   </Link>
                 </div>
-                <button onClick={persist} className="rounded-xl border border-stone-200 bg-white px-5 py-2.5 text-sm font-bold text-stone-700">Simpan Draft</button>
-                <button onClick={persist} className="rounded-xl bg-primary px-6 py-2.5 text-sm font-black text-white shadow-lg shadow-primary/20">Kirim Penilaian</button>
+                <button
+                  type="button"
+                  onClick={saveDefaultSelection}
+                  className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-5 py-2.5 text-sm font-black text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5"
+                >
+                  <span className="material-symbols-outlined text-[18px]">save_as</span>
+                  {defaultSaved ? "Default Tersimpan" : "Simpan Default"}
+                </button>
+                <button
+                  type="button"
+                  onClick={persist}
+                  className="inline-flex items-center gap-2 rounded-xl bg-stone-950 px-6 py-2.5 text-sm font-black text-white shadow-lg shadow-stone-950/15 transition-all hover:bg-stone-800"
+                >
+                  <span className="material-symbols-outlined text-[18px]">save</span>
+                  Simpan
+                </button>
               </div>
             </header>
 
@@ -292,11 +350,15 @@ export default function DetailedInputATL() {
                   <div className="text-right">
                     <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Subskill Kontekstual</p>
                     <div className="mt-2 flex max-w-xl flex-wrap justify-end gap-2">
-                      {(criterion.atlCategories || []).map((cat) => (
-                        <span key={cat} className={`rounded-lg border px-3 py-2 text-xs font-black ${getATLCategoryMeta(cat).chipClass || "border-stone-200 bg-stone-50 text-stone-700"}`}>
+                      {(criterion.atlCategories || []).map((cat) => {
+                        const meta = getATLCategoryMeta(cat);
+                        return (
+                        <span key={cat} className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-black ${meta.chipClass || "border-stone-200 bg-stone-50 text-stone-700"}`}>
+                          <span className="material-symbols-outlined text-[15px]">{meta.icon || "label"}</span>
                           {cat}
                         </span>
-                      ))}
+                      );
+                      })}
                     </div>
                     <div className="mt-3 flex items-center justify-end gap-3">
                       <button
@@ -345,17 +407,39 @@ export default function DetailedInputATL() {
                   })}
                 </div>
 
-                <div className="mt-6 grid gap-5 lg:grid-cols-[1.4fr_.9fr]">
+                <div className="mt-6 space-y-5">
                   <div className="rounded-2xl border border-stone-200 bg-white p-5">
                     <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Catatan Guru <span className="normal-case tracking-normal">(opsional)</span></p>
                     <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={250} placeholder="Tulis catatan tentang performa siswa pada kriteria ini..." className="mt-3 h-24 w-full resize-none rounded-xl border border-stone-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
                     <p className="text-right text-xs text-stone-400">{note.length} / 250</p>
                   </div>
                   <div className="rounded-2xl border border-stone-200 bg-white p-5">
-                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Informasi</p>
-                    <p className="mt-3 text-sm leading-6 text-stone-600">Penilaian disimpan otomatis saat guru memilih salah satu level rubric.</p>
-                    <div className="mt-4 flex justify-between rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm font-black text-stone-900">
-                      <span>Status kriteria</span><span>{criterionRating ? "Sudah dinilai" : "Belum dinilai"}</span>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Informasi Skala</p>
+                        <p className="mt-2 text-sm leading-6 text-stone-600">Gunakan lima level berikut untuk membaca performa siswa secara sederhana.</p>
+                      </div>
+                      <span className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-black text-stone-900">
+                        {criterionRating ? "Sudah dinilai" : "Belum dinilai"}
+                      </span>
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-5">
+                      {ratingOptions.map((option) => {
+                        const meta = getRatingMeta(option.code);
+                        return (
+                          <div
+                            key={option.code}
+                            className="rounded-2xl border p-3 shadow-sm"
+                            style={{ borderColor: meta.color, backgroundColor: `${meta.color}14` }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className={`inline-flex h-8 min-w-10 items-center justify-center rounded-lg border text-xs font-black ${meta.chipClass}`}>{option.code}</span>
+                              <span className="text-xs font-black text-stone-900">{option.label}</span>
+                            </div>
+                            <p className="mt-2 text-[11px] font-semibold leading-5 text-stone-600">{ratingMeaning[option.code]}</p>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -366,8 +450,7 @@ export default function DetailedInputATL() {
           </section>
         </section>
 
-        <footer className="flex items-center justify-between">
-          <Link to="/students" className="rounded-xl border border-stone-200 bg-white px-5 py-3 text-sm font-bold">Kembali ke Daftar Siswa</Link>
+        <footer className="flex items-center justify-end">
           <div className="flex gap-3">
             <button disabled={selectedCriterionIndex === 0} onClick={() => setSelectedCriterionIndex((i) => Math.max(0, i - 1))} className="rounded-xl border border-stone-200 bg-white px-6 py-3 text-sm font-bold disabled:opacity-40">Kriteria Sebelumnya</button>
             <button disabled={selectedCriterionIndex >= criteria.length - 1} onClick={() => setSelectedCriterionIndex((i) => Math.min(criteria.length - 1, i + 1))} className="rounded-xl border border-stone-200 bg-white px-6 py-3 text-sm font-bold disabled:opacity-40">Kriteria Berikutnya</button>

@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "./sidebar";
+import { createClass, getClasses, getUsers, updateUser } from "../../services/atlApi";
 
 const initialUsers = [
   {
@@ -85,6 +86,20 @@ export default function ManageUser() {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("Semua Peran");
 
+  useEffect(() => {
+    getUsers()
+      .then((items) => {
+        if (Array.isArray(items) && items.length > 0) setUsers(items);
+      })
+      .catch(() => {});
+    getClasses()
+      .then((items) => {
+        const codes = items.map((item) => item.code).filter(Boolean);
+        if (codes.length > 0) setClassList(codes);
+      })
+      .catch(() => {});
+  }, []);
+
   const roleOptions = useMemo(
     () => ["Semua Peran", ...new Set(users.map((u) => u.roleGroup))],
     [users]
@@ -112,7 +127,7 @@ export default function ManageUser() {
     [users]
   );
 
-  const addClass = () => {
+  const addClass = async () => {
     if (!isAcademic) return;
     const normalized = newClassName.trim().toUpperCase().replace(/\s+/g, "");
     if (!normalized) return;
@@ -122,8 +137,13 @@ export default function ManageUser() {
       return;
     }
 
-    setClassList((prev) => [...prev, normalized]);
-    setNewClassName("");
+    try {
+      const created = await createClass({ code: normalized, displayName: `${normalized} - Primary`, level: "Primary" });
+      setClassList((prev) => [...prev, created?.code || normalized]);
+      setNewClassName("");
+    } catch (error) {
+      alert("Gagal menyimpan kelas ke backend. Pastikan sudah login.");
+    }
   };
 
   const toggleClassAccess = (userId, className) => {
@@ -141,8 +161,13 @@ export default function ManageUser() {
     );
   };
 
-  const saveAccessState = () => {
-    alert("Pengaturan kelas dan akses guru berhasil disimpan.");
+  const saveAccessState = async () => {
+    try {
+      await Promise.all(assignableTeachers.map((teacher) => updateUser(teacher.id, teacher)));
+      alert("Pengaturan kelas dan akses guru berhasil disimpan.");
+    } catch (error) {
+      alert("Gagal menyimpan akses guru ke backend. Pastikan sudah login.");
+    }
   };
 
   const getInitials = (name) =>
