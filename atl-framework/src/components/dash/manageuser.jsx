@@ -1,59 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "./sidebar";
-import { createClass, getClasses, getUsers, updateUser } from "../../services/atlApi";
-
-const initialUsers = [
-  {
-    id: 1,
-    name: "Alfa Santoso Wijaya",
-    nip: "19901112 201502 1 003",
-    roleLabel: "Admin",
-    roleGroup: "Admin",
-    status: "Aktif",
-    lastLogin: "Baru saja",
-    classAccess: [],
-  },
-  {
-    id: 2,
-    name: "Maria Ulfa Rahmawati",
-    nip: "19890214 201103 2 011",
-    roleLabel: "Akademik",
-    roleGroup: "Akademik",
-    status: "Aktif",
-    lastLogin: "9 menit lalu",
-    classAccess: ["3A", "4A"],
-  },
-  {
-    id: 3,
-    name: "Megawati Putri",
-    nip: "19850325 201001 2 001",
-    roleLabel: "Guru (Wali Kelas)",
-    roleGroup: "Guru Wali Kelas",
-    status: "Aktif",
-    lastLogin: "2 jam lalu",
-    classAccess: ["3A"],
-  },
-  {
-    id: 4,
-    name: "Joko Wiryanto",
-    nip: "19920505 201801 2 005",
-    roleLabel: "PJ Mapel - IPA",
-    roleGroup: "PJ Mapel",
-    status: "Aktif",
-    lastLogin: "1 hari lalu",
-    classAccess: ["3A", "4A"],
-  },
-  {
-    id: 5,
-    name: "Andi Prasetyo",
-    nip: "19930809 201909 1 007",
-    roleLabel: "PJ Mapel - Math",
-    roleGroup: "PJ Mapel",
-    status: "Aktif",
-    lastLogin: "3 jam lalu",
-    classAccess: ["4A"],
-  },
-];
+import { createClass, getClasses, getCurrentUser, getUsers, updateUser } from "../../services/atlApi";
 
 const roleColors = {
   Admin: "bg-slate-100 text-slate-700 border-slate-200",
@@ -76,28 +23,51 @@ const classColorVariants = [
 ];
 
 export default function ManageUser() {
-  const currentUser = { name: "Joko Wiryanto", role: "Guru / Evaluator" };
+  const [currentUser, setCurrentUser] = useState({ name: "Belum Login", role: "Guest" });
   const isAcademic = currentUser.role === "Akademik";
 
   const [activeTab, setActiveTab] = useState("users");
-  const [users, setUsers] = useState(initialUsers);
-  const [classList, setClassList] = useState(["3A", "4A"]);
+  const [users, setUsers] = useState([]);
+  const [classList, setClassList] = useState([]);
+  const [backendError, setBackendError] = useState("");
   const [newClassName, setNewClassName] = useState("");
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("Semua Peran");
 
   useEffect(() => {
-    getUsers()
-      .then((items) => {
-        if (Array.isArray(items) && items.length > 0) setUsers(items);
+    let cancelled = false;
+    const syncCurrentUser = async () => {
+      const user = await getCurrentUser();
+      if (!cancelled && user) {
+        setCurrentUser({
+          ...user,
+          name: user.name || user.username || "Belum Login",
+          role: user.roleLabel || user.roleGroup || "Guest",
+        });
+      }
+    };
+    syncCurrentUser();
+    window.addEventListener("focus", syncCurrentUser);
+    window.addEventListener("atl-auth-updated", syncCurrentUser);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", syncCurrentUser);
+      window.removeEventListener("atl-auth-updated", syncCurrentUser);
+    };
+  }, []);
+
+  useEffect(() => {
+    Promise.all([getUsers(), getClasses()])
+      .then(([userItems, classItems]) => {
+        setUsers(Array.isArray(userItems) ? userItems : []);
+        setClassList((classItems || []).map((item) => item.code).filter(Boolean));
+        setBackendError("");
       })
-      .catch(() => {});
-    getClasses()
-      .then((items) => {
-        const codes = items.map((item) => item.code).filter(Boolean);
-        if (codes.length > 0) setClassList(codes);
-      })
-      .catch(() => {});
+      .catch((error) => {
+        setUsers([]);
+        setClassList([]);
+        setBackendError(error.message || "Gagal mengambil user/kelas dari backend.");
+      });
   }, []);
 
   const roleOptions = useMemo(
@@ -180,7 +150,7 @@ export default function ManageUser() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
-      <Sidebar active="user" user={currentUser} />
+      <Sidebar active="user" />
 
       <main className="relative flex flex-1 flex-col overflow-hidden bg-stone-50">
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
@@ -229,6 +199,13 @@ export default function ManageUser() {
                 </button>
               </nav>
             </div>
+
+            {backendError && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
+                <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
+                {backendError} User Management tidak memakai dummy/localStorage sebagai pengganti data.
+              </div>
+            )}
 
             {activeTab === "users" && (
               <>

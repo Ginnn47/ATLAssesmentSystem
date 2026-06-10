@@ -3,7 +3,7 @@ import Sidebar from "./sidebar";
 export default function SectionPage({ title, badge, description }) {
   return (
     <div className="flex h-screen w-full overflow-hidden">
-      <Sidebar user={{ name: "Budi Santoso", role: "Evaluator / Guru" }} />
+      <Sidebar />
 
       <main className="flex flex-1 flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">

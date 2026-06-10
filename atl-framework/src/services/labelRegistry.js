@@ -2,11 +2,11 @@ import api from "../api";
 
 export const fallbackLabelRegistry = {
   scoreLevels: [
-    { min: 85, label: "Excellent", color: "#10B981", tone: "emerald", className: "bg-emerald-100 text-emerald-700", badgeClass: "bg-emerald-100 text-emerald-700", description: "Consistently exceeds expectations" },
-    { min: 70, label: "Good", color: "#3B82F6", tone: "blue", className: "bg-blue-100 text-blue-700", badgeClass: "bg-blue-100 text-blue-700", description: "Meets expectations with consistent performance" },
-    { min: 50, label: "Average", color: "#F59E0B", tone: "amber", className: "bg-amber-100 text-amber-700", badgeClass: "bg-amber-100 text-amber-700", description: "Developing and needs steady reinforcement" },
-    { min: 30, label: "Low", color: "#F97316", tone: "orange", className: "bg-orange-100 text-orange-700", badgeClass: "bg-orange-100 text-orange-700", description: "Needs guided support to progress" },
-    { min: 0, label: "Critical", color: "#EF4444", tone: "red", className: "bg-red-100 text-red-700", badgeClass: "bg-red-100 text-red-700", description: "Requires immediate support and monitoring" },
+    { min: 85, label: "EE", fullLabel: "Exceeding Expectation", color: "#059669", tone: "emerald", className: "bg-emerald-100 text-emerald-700", badgeClass: "bg-emerald-100 text-emerald-700", description: "Exceeding Expectation" },
+    { min: 70, label: "ME", fullLabel: "Meeting Expectation", color: "#2563EB", tone: "blue", className: "bg-blue-100 text-blue-700", badgeClass: "bg-blue-100 text-blue-700", description: "Meeting Expectation" },
+    { min: 50, label: "DE", fullLabel: "Developing Expectation", color: "#F59E0B", tone: "amber", className: "bg-amber-100 text-amber-700", badgeClass: "bg-amber-100 text-amber-700", description: "Developing Expectation" },
+    { min: 30, label: "PTE", fullLabel: "Progressing Toward Expectation", color: "#F97316", tone: "orange", className: "bg-orange-100 text-orange-700", badgeClass: "bg-orange-100 text-orange-700", description: "Progressing Toward Expectation" },
+    { min: 0, label: "NFI", fullLabel: "Need Further Improvement", color: "#EF4444", tone: "red", className: "bg-red-100 text-red-700", badgeClass: "bg-red-100 text-red-700", description: "Need Further Improvement" },
   ],
   noDataLevel: { label: "No Data", color: "#A8A29E", tone: "stone", className: "bg-stone-100 text-stone-500", badgeClass: "bg-stone-100 text-stone-500", description: "No assessment data is available yet", count: 0 },
   atlCategories: {
@@ -171,6 +171,8 @@ export const getScoreDistributionConfig = (includeNoData = true) => {
   const rows = (registry.scoreLevels || fallbackLabelRegistry.scoreLevels).map((level) => ({
     key: level.label,
     label: level.label,
+    fullLabel: level.fullLabel || level.description || level.label,
+    description: level.description,
     color: level.color,
     className: level.className,
     badgeClass: level.badgeClass,
@@ -180,10 +182,21 @@ export const getScoreDistributionConfig = (includeNoData = true) => {
 
 export const normalizeScoreBand = (label) => {
   const legacyMap = {
-    "Sangat Baik": "Excellent",
-    Baik: "Good",
-    Cukup: "Average",
-    Kurang: "Low",
+    Excellent: "EE",
+    "Sangat Baik": "EE",
+    "Exceeding Expectation": "EE",
+    Good: "ME",
+    Baik: "ME",
+    "Meeting Expectation": "ME",
+    Average: "DE",
+    Cukup: "DE",
+    "Developing Expectation": "DE",
+    Low: "PTE",
+    Kurang: "PTE",
+    "Progressing Toward Expectation": "PTE",
+    Critical: "NFI",
+    "Need Improvement": "NFI",
+    "Need Further Improvement": "NFI",
     "Belum Dinilai": getNoDataLevel().label,
     "-": getNoDataLevel().label,
     "Not Assessed": getNoDataLevel().label,

@@ -22,7 +22,7 @@ export default function Login() {
       await loginUser({ username, password });
       navigate("/dashboard");
     } catch (loginError) {
-      setError("Username atau password tidak valid.");
+      setError(loginError?.message || "Username atau password tidak valid.");
     } finally {
       setIsSubmitting(false);
     }

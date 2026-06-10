@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "./sidebar";
 import { getDashboardAnalytics } from "../../services/atlApi";
 import { getATLDistributionTemplate, getNoDataLevel } from "../../services/labelRegistry";
+import posterFuzzy from "../../assets/posterFuzzy.png";
 
 const emptyDashboard = {
   meta: { semester: "Semester 2 (2024/2025)", updatedAt: null },
@@ -45,11 +46,11 @@ const emptyDashboard = {
   ],
   recentActivities: [],
   workflow: [
-    { step: 1, title: "Input Penilaian", note: "Guru melakukan input penilaian ATL", icon: "edit_note", color: "#45B978" },
-    { step: 2, title: "Perhitungan Bobot", note: "Sistem menghitung bobot kriteria", icon: "hub", color: "#45B978" },
-    { step: 3, title: "Analisis Siswa", note: "Nilai dianalisis berdasarkan ATL", icon: "school", color: "#F6B21A" },
-    { step: 4, title: "Review & Validasi", note: "Validasi oleh pihak terkait", icon: "verified", color: "#4F8DE8" },
-    { step: 5, title: "Laporan Akhir", note: "Hasil siap dilihat dan diunduh", icon: "person", color: "#9CA3AF" },
+    { step: 1, title: "Input Nilai", note: "Guru mengisi rating ATL berdasarkan rubrik.", icon: "edit_note", color: "#45B978" },
+    { step: 2, title: "Bobot Fuzzy-AHP", note: "Sistem memakai bobot subskill per konteks.", icon: "hub", color: "#45B978" },
+    { step: 3, title: "Agregasi Data", note: "Nilai dirangkum per siswa, kelas, dan ATL.", icon: "query_stats", color: "#F6B21A" },
+    { step: 4, title: "Review Akademik", note: "Tim akademik meninjau area kuat dan fokus.", icon: "verified", color: "#4F8DE8" },
+    { step: 5, title: "Laporan", note: "Hasil siap digunakan untuk tindak lanjut.", icon: "description", color: "#7C4CE0" },
   ],
   documents: [
     { title: "Laporan Kelas", note: "Ringkasan ATL per kelas", icon: "description", color: "green" },
@@ -236,12 +237,21 @@ const ClassBarChart = ({ rows }) => {
 export default function Dashboard() {
   const [dashboard, setDashboard] = useState(emptyDashboard);
   const [loading, setLoading] = useState(true);
+  const [backendError, setBackendError] = useState("");
+  const [showFlowPoster, setShowFlowPoster] = useState(false);
 
   const loadDashboard = async () => {
     setLoading(true);
-    const data = await getDashboardAnalytics();
-    setDashboard(mergeDashboardData(data));
-    setLoading(false);
+    try {
+      const data = await getDashboardAnalytics();
+      setDashboard(mergeDashboardData(data));
+      setBackendError("");
+    } catch (error) {
+      setDashboard(emptyDashboard);
+      setBackendError(error.message || "Dashboard gagal mengambil data dari backend.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -254,6 +264,15 @@ export default function Dashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!showFlowPoster) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setShowFlowPoster(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showFlowPoster]);
+
   const summary = dashboard.summary || emptyDashboard.summary;
   const insight = useMemo(() => {
     const focus = summary.focusATL || "-";
@@ -263,7 +282,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[#FBFAF7]">
-      <Sidebar user={{ name: "Joko Wiryanto", role: "Guru / Evaluator" }} />
+      <Sidebar />
 
       <main className="flex flex-1 flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto px-5 py-6 lg:px-8">
@@ -289,6 +308,13 @@ export default function Dashboard() {
                 </div>
               </div>
             </header>
+
+            {backendError && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
+                <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
+                {backendError} Data dummy/localStorage tidak dipakai sebagai pengganti.
+              </div>
+            )}
 
             <section className="rounded-2xl border border-stone-200/70 bg-white px-6 py-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
               <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -403,7 +429,7 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <section className="grid gap-5 lg:grid-cols-[0.85fr_1.55fr]">
+            <section className="grid gap-5">
               <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
                 <h2 className="text-base font-black text-stone-950">Aktivitas Terbaru</h2>
                 <p className="mt-2 text-xs font-semibold text-stone-500">Aktivitas terbaru yang terjadi dalam sistem.</p>
@@ -432,25 +458,51 @@ export default function Dashboard() {
                 <button className="mt-6 w-full rounded-xl border border-amber-200 px-4 py-3 text-xs font-black text-primary">Lihat Semua Aktivitas</button>
               </div>
 
-              <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
-                <h2 className="text-base font-black text-stone-950">Alur Penilaian ATL</h2>
-                <p className="mt-2 text-xs font-semibold text-stone-500">Tahapan proses penilaian ATL dalam sistem.</p>
-                <div className="mt-8 grid gap-4 md:grid-cols-5">
-                  {(dashboard.workflow || []).map((step, index) => (
-                    <div key={step.step} className="relative text-center">
-                      {index < (dashboard.workflow || []).length - 1 && (
-                        <div className="absolute left-1/2 top-7 hidden h-px w-full bg-stone-200 md:block" />
-                      )}
-                      <div className="relative mx-auto flex size-14 items-center justify-center rounded-full border-4 border-white shadow-md" style={{ backgroundColor: `${step.color}22`, color: step.color }}>
-                        <span className="material-symbols-outlined">{step.icon}</span>
-                      </div>
-                      <p className="mt-3 text-[10px] font-black text-stone-400">{step.step}</p>
-                      <p className="mt-1 text-xs font-black text-stone-900">{step.title}</p>
-                      <p className="mt-1 text-[10px] font-semibold leading-4 text-stone-500">{step.note}</p>
-                    </div>
-                  ))}
+              <div className="rounded-[2rem] border border-stone-200 bg-white p-6 shadow-[0_20px_55px_rgba(15,23,42,0.07)] lg:p-10">
+                <div className="flex items-start gap-4">
+                  <span className="mt-1 h-10 w-1.5 shrink-0 rounded-full bg-primary" />
+                  <div>
+                    <h2 className="text-2xl font-black tracking-tight text-stone-950 lg:text-3xl">Alur Penilaian ATL</h2>
+                    <p className="mt-2 text-sm font-semibold text-stone-500 lg:text-base">Tahapan proses penilaian ATL dalam sistem.</p>
+                  </div>
                 </div>
-                <button className="mt-7 w-full rounded-xl border border-amber-200 px-4 py-3 text-xs font-black text-primary">Lihat Detail Alur</button>
+
+                <div className="relative mt-10">
+                  <div className="absolute left-[10%] right-[10%] top-14 hidden h-0.5 bg-stone-200 lg:block" />
+                  <div className="grid gap-6 lg:grid-cols-5 lg:gap-4">
+                    {(dashboard.workflow || []).map((step) => (
+                      <article key={step.step} className="relative flex min-w-0 flex-col items-center">
+                        <div
+                          className="relative z-10 flex size-28 items-center justify-center rounded-full border-[9px] border-white shadow-[0_10px_24px_rgba(15,23,42,0.12)]"
+                          style={{ backgroundColor: `${step.color}16`, color: step.color }}
+                        >
+                          <span className="material-symbols-outlined text-[46px]">{step.icon}</span>
+                        </div>
+                        <div className="hidden h-6 w-px lg:block" style={{ backgroundColor: `${step.color}75` }} />
+                        <span className="hidden size-3 rounded-full lg:block" style={{ backgroundColor: step.color }} />
+
+                        <div className="mt-4 flex min-h-[190px] w-full flex-col items-center rounded-2xl border border-stone-200 bg-white px-4 py-6 text-center shadow-[0_8px_22px_rgba(15,23,42,0.035)]">
+                          <span
+                            className="inline-flex min-w-14 items-center justify-center rounded-full px-4 py-2 text-base font-black"
+                            style={{ backgroundColor: `${step.color}16`, color: step.color }}
+                          >
+                            {step.step}
+                          </span>
+                          <h3 className="mt-5 text-base font-black leading-tight text-stone-950">{step.title}</h3>
+                          <p className="mt-4 text-sm font-semibold leading-6 text-stone-500">{step.note}</p>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowFlowPoster(true)}
+                  className="mt-10 w-full rounded-xl border border-primary bg-white px-4 py-4 text-base font-black text-primary transition-all hover:bg-primary/5"
+                >
+                  Lihat Detail Alur
+                </button>
               </div>
             </section>
 
@@ -497,6 +549,40 @@ export default function Dashboard() {
           </div>
         </div>
       </main>
+
+      {showFlowPoster && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/70 p-3 backdrop-blur-md sm:p-6">
+          <button
+            type="button"
+            aria-label="Tutup poster alur"
+            className="absolute inset-0"
+            onClick={() => setShowFlowPoster(false)}
+          />
+          <section className="relative z-10 flex h-full max-h-[96vh] w-full max-w-7xl flex-col overflow-hidden rounded-[2rem] border border-white/30 bg-white/95 shadow-[0_32px_90px_rgba(0,0,0,0.38)]">
+            <div className="flex shrink-0 items-center justify-between gap-4 border-b border-stone-200 bg-white/90 px-5 py-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-primary">Detail Alur Penilaian</p>
+                <h3 className="mt-1 text-lg font-black text-stone-950">Poster Fuzzy-AHP ATL</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFlowPoster(false)}
+                className="flex size-11 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-600 shadow-sm transition hover:border-primary hover:text-primary"
+                aria-label="Tutup poster"
+              >
+                <span className="material-symbols-outlined text-[22px]">close</span>
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-stone-100/70 p-3 sm:p-6">
+              <img
+                src={posterFuzzy}
+                alt="Poster alur penilaian Fuzzy-AHP ATL"
+                className="max-h-full w-auto max-w-full rounded-2xl bg-white object-contain shadow-[0_22px_65px_rgba(15,23,42,0.20)]"
+              />
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

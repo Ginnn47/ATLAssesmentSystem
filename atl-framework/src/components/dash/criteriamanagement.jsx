@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { dummyATL, saveATLData } from "../dummyData/dummyATL";
-import { createContext, createCriterion, deleteCriterion, getATLHierarchy, getCriteria, updateCriterion } from "../../services/atlApi";
+import { createContext, createCriterion, deleteCriterion, deleteTopic, getATLHierarchy, getCriteria, getTopics, updateCriterion } from "../../services/atlApi";
 import { getATLCategoryMeta, getSubskillMeta } from "../../services/labelRegistry";
-import { addCustomSubtopic, getSubjectData } from "../../services/topicCatalog";
+import { createCustomSubtopicDraft, getSubjectData, saveCustomSubtopic } from "../../services/topicCatalog";
 
 const fallbackAtlConfig = { icon: "label", color: "bg-stone-100 text-stone-700", bgLight: "bg-stone-50" };
 
@@ -15,7 +15,7 @@ const toATLConfig = (meta = fallbackAtlConfig) => ({
 const getCategoryConfig = (categoryName) => toATLConfig(getATLCategoryMeta(categoryName));
 const getSubskillConfig = (subskillName, index = 0) => toATLConfig(getSubskillMeta(subskillName, index));
 
-export default function criteriamanagement() {
+export default function CriteriaManagement() {
   const subjectStyles = {
     singing: { icon: "music_note", bgColor: "bg-rose-50", borderColor: "border-rose-200", textColor: "text-rose-700", badgeColor: "bg-rose-100 text-rose-700", accentBorder: "border-rose-300" },
     ipa: { icon: "science", bgColor: "bg-emerald-50", borderColor: "border-emerald-200", textColor: "text-emerald-700", badgeColor: "bg-emerald-100 text-emerald-700", accentBorder: "border-emerald-300" },
@@ -36,8 +36,10 @@ export default function criteriamanagement() {
   const [editingIndex, setEditingIndex] = useState(null);
   const [, setDataVersion] = useState(0);
   const [atlHierarchy, setAtlHierarchy] = useState([]);
+  const [backendError, setBackendError] = useState("");
   const [newSubtopicName, setNewSubtopicName] = useState("");
   const [newSubtopicDescription, setNewSubtopicDescription] = useState("");
+  const [deletingSubtopicId, setDeletingSubtopicId] = useState("");
 
   // Form state
   const [formData, setFormData] = useState({
@@ -60,7 +62,7 @@ export default function criteriamanagement() {
   });
 
   // Get current criteria list
-  const currentCriteria = dummyATL[selectedSubtopic] || [];
+  const currentCriteria = backendError ? [] : dummyATL[selectedSubtopic] || [];
 
   // Get current subject config
   const currentSubjectConfig = subjects.find((s) => s.id === selectedSubject);
@@ -82,9 +84,9 @@ export default function criteriamanagement() {
   };
 
   const selectedCategories = atlHierarchy.filter((category) => (formData.categoryIds || []).map(String).includes(String(category.id)));
-  const selectedCategorySubskills = selectedCategories.flatMap((category) => category.subskills || []);
-  const selectedSubskills = selectedCategorySubskills.filter((subskill) => (formData.subskillIds || []).map(String).includes(String(subskill.id)));
   const selectedCategory = selectedCategories[0] || atlHierarchy[0];
+  const selectedCategorySubskills = selectedCategory?.subskills || [];
+  const selectedSubskills = selectedCategorySubskills.filter((subskill) => (formData.subskillIds || []).map(String).includes(String(subskill.id)));
   const selectedSubskill = selectedSubskills[0] || selectedCategorySubskills[0] || selectedCategory?.subskills?.[0];
 
   const findCategoryForSubskill = (subskillIdOrName) =>
@@ -104,27 +106,34 @@ export default function criteriamanagement() {
     return [];
   };
 
+  const normalizeMetasToOneCategory = (metas) => {
+    const normalizedMetas = (metas || []).filter(Boolean);
+    if (normalizedMetas.length <= 1) return normalizedMetas;
+    const counts = {};
+    const firstSeen = {};
+    normalizedMetas.forEach((meta, index) => {
+      const categoryId = String(meta.category.id);
+      counts[categoryId] = (counts[categoryId] || 0) + 1;
+      if (firstSeen[categoryId] === undefined) firstSeen[categoryId] = index;
+    });
+    const selectedCategoryId = Object.keys(counts).sort((left, right) => {
+      if (counts[right] !== counts[left]) return counts[right] - counts[left];
+      return firstSeen[left] - firstSeen[right];
+    })[0];
+    return normalizedMetas.filter((meta) => String(meta.category.id) === selectedCategoryId);
+  };
+
   const setCategorySelection = (category) => {
-    const currentCategoryIds = (formData.categoryIds || []).map(String);
-    const isActive = currentCategoryIds.includes(String(category.id));
     const categorySubskillIds = (category.subskills || []).map((subskill) => subskill.id);
-    const nextCategoryIds = isActive
-      ? currentCategoryIds.filter((id) => id !== String(category.id))
-      : [...currentCategoryIds, String(category.id)];
-    const nextSubskillIds = isActive
-      ? (formData.subskillIds || []).filter((id) => !categorySubskillIds.map(String).includes(String(id)))
-      : Array.from(new Set([...(formData.subskillIds || []), ...categorySubskillIds]));
-    const nextSubskills = atlHierarchy
-      .flatMap((item) => item.subskills || [])
-      .filter((subskill) => nextSubskillIds.map(String).includes(String(subskill.id)));
+    const nextSubskills = category.subskills || [];
 
     setFormData((prev) => ({
       ...prev,
-      categoryIds: nextCategoryIds,
-      categoryId: nextCategoryIds[0] || "",
-      categoryName: atlHierarchy.find((item) => String(item.id) === String(nextCategoryIds[0]))?.name || "",
-      subskillIds: nextSubskillIds,
-      subskillId: nextSubskillIds[0] || "",
+      categoryIds: [category.id],
+      categoryId: category.id,
+      categoryName: category.name,
+      subskillIds: categorySubskillIds,
+      subskillId: categorySubskillIds[0] || "",
       subskillName: nextSubskills[0]?.name || "",
       atl: nextSubskills.map((subskill) => subskill.name),
     }));
@@ -136,9 +145,7 @@ export default function criteriamanagement() {
     const nextSubskillIds = isActive
       ? current.filter((id) => id !== String(subskill.id))
       : [...current, String(subskill.id)];
-    const nextSubskills = atlHierarchy
-      .flatMap((item) => item.subskills || [])
-      .filter((item) => nextSubskillIds.map(String).includes(String(item.id)));
+    const nextSubskills = selectedCategorySubskills.filter((item) => nextSubskillIds.map(String).includes(String(item.id)));
     setFormData((prev) => ({
       ...prev,
       subskillIds: nextSubskillIds,
@@ -167,10 +174,43 @@ export default function criteriamanagement() {
     window.dispatchEvent(new Event("atl-data-updated"));
   };
 
+  const refreshSelectedSubtopicFromBackend = async (topicId = selectedSubtopic) => {
+    await getTopics();
+    const nextSubjects = buildSubjects();
+    setSubjects(nextSubjects);
+    if (topicId) {
+      const criteria = await getCriteria(topicId);
+      dummyATL[topicId] = criteria || [];
+      saveATLData(dummyATL);
+    }
+    setDataVersion((v) => v + 1);
+    window.dispatchEvent(new Event("atl-topics-updated"));
+    window.dispatchEvent(new Event("atl-data-updated"));
+  };
+
   useEffect(() => {
     const syncTopics = () => setSubjects(buildSubjects());
     window.addEventListener("atl-topics-updated", syncTopics);
     return () => window.removeEventListener("atl-topics-updated", syncTopics);
+  }, []);
+
+  useEffect(() => {
+    getTopics()
+      .then(() => {
+        const nextSubjects = buildSubjects();
+        setSubjects(nextSubjects);
+        const topicIds = nextSubjects.flatMap((subject) => (subject.topics || []).map((topic) => topic.id));
+        if (!topicIds.includes(selectedSubtopic)) {
+          const firstSubject = nextSubjects[0];
+          setSelectedSubject(firstSubject?.id || "");
+          setSelectedSubtopic(firstSubject?.topics?.[0]?.id || "");
+        }
+        setBackendError("");
+      })
+      .catch((error) => {
+        setSubjects([]);
+        setBackendError(error.message || "Gagal mengambil topik dari backend.");
+      });
   }, []);
 
   const handleAddSubtopic = async () => {
@@ -179,49 +219,106 @@ export default function criteriamanagement() {
       return;
     }
 
-    const created = addCustomSubtopic(selectedSubject, newSubtopicName, newSubtopicDescription);
+    const created = createCustomSubtopicDraft(selectedSubject, newSubtopicName, newSubtopicDescription);
     if (!created) return;
 
-    const nextSubjects = buildSubjects();
-    setSubjects(nextSubjects);
-    dummyATL[created.id] = dummyATL[created.id] || [];
-    persistATLChanges();
-
-    const subject = nextSubjects.find((item) => item.id === selectedSubject);
-    await createContext({
+    const currentSubjects = buildSubjects();
+    const subject = currentSubjects.find((item) => item.id === selectedSubject);
+    const backendContext = await createContext({
       grade: "Grade 3",
       subjectName: subject?.label || selectedSubject,
       unitName: created.label,
       description: created.description,
       legacyTopicCode: created.id,
     });
+    if (!backendContext) {
+      alert("Gagal menyimpan subtopik ke backend. Pastikan sudah login.");
+      return;
+    }
+
+    saveCustomSubtopic(selectedSubject, created);
+    const nextSubjects = buildSubjects();
+    setSubjects(nextSubjects);
+    dummyATL[created.id] = dummyATL[created.id] || [];
+    persistATLChanges();
+    await getTopics();
+    setSubjects(buildSubjects());
 
     setSelectedSubtopic(created.id);
     setNewSubtopicName("");
     setNewSubtopicDescription("");
   };
 
+  const handleDeleteSubtopic = async (subtopic) => {
+    const confirmed = confirm(
+      `Hapus subtopik "${subtopic.label}"?\n\nContext, rubrik, pembobotan, dan nilai kontekstual untuk subtopik ini juga akan dihapus. Tindakan ini tidak dapat dibatalkan dari halaman ini.`
+    );
+    if (!confirmed) return;
+
+    setDeletingSubtopicId(subtopic.id);
+    const deleted = await deleteTopic(subtopic.id);
+    if (!deleted) {
+      setDeletingSubtopicId("");
+      alert("Gagal menghapus subtopik dari backend. Pastikan sudah login dan coba lagi.");
+      return;
+    }
+
+    delete dummyATL[subtopic.id];
+    if (dummyATL.savedWeights) delete dummyATL.savedWeights[subtopic.id];
+    Object.values(dummyATL.savedAssessments || {}).forEach((assessments) => {
+      if (assessments) delete assessments[subtopic.id];
+    });
+    persistATLChanges();
+
+    try {
+      await getTopics();
+      const nextSubjects = buildSubjects();
+      const nextSubject =
+        nextSubjects.find((subject) => subject.id === selectedSubject && subject.topics?.length > 0)
+        || nextSubjects.find((subject) => subject.topics?.length > 0)
+        || nextSubjects[0];
+      setSubjects(nextSubjects);
+      setSelectedSubject(nextSubject?.id || "");
+      setSelectedSubtopic(nextSubject?.topics?.[0]?.id || "");
+      setShowAddForm(false);
+      setBackendError("");
+    } catch (error) {
+      setBackendError(error.message || "Subtopik terhapus, tetapi katalog terbaru gagal dimuat.");
+    } finally {
+      setDeletingSubtopicId("");
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getCriteria(selectedSubtopic), getATLHierarchy()]).then(([, hierarchy]) => {
-      if (cancelled) return;
-      setAtlHierarchy(hierarchy || []);
-      const firstCategory = hierarchy?.[0];
-      const firstSubskill = firstCategory?.subskills?.[0];
-      if (!formData.categoryId && firstCategory && firstSubskill) {
-        setFormData((prev) => ({
-          ...prev,
-          categoryId: firstCategory.id,
-          categoryIds: [firstCategory.id],
-          categoryName: firstCategory.name,
-          subskillId: firstSubskill.id,
-          subskillIds: firstCategory.subskills?.map((subskill) => subskill.id) || [firstSubskill.id],
-          subskillName: firstSubskill.name,
-          atl: firstCategory.subskills?.map((subskill) => subskill.name) || [firstSubskill.name],
-        }));
-      }
-      if (!cancelled) setDataVersion((v) => v + 1);
-    });
+    if (!selectedSubtopic) return () => { cancelled = true; };
+    Promise.all([getCriteria(selectedSubtopic), getATLHierarchy()])
+      .then(([, hierarchy]) => {
+        if (cancelled) return;
+        setAtlHierarchy(hierarchy || []);
+        setBackendError("");
+        const firstCategory = hierarchy?.[0];
+        const firstSubskill = firstCategory?.subskills?.[0];
+        if (!formData.categoryId && firstCategory && firstSubskill) {
+          setFormData((prev) => ({
+            ...prev,
+            categoryId: firstCategory.id,
+            categoryIds: [firstCategory.id],
+            categoryName: firstCategory.name,
+            subskillId: firstSubskill.id,
+            subskillIds: firstCategory.subskills?.map((subskill) => subskill.id) || [firstSubskill.id],
+            subskillName: firstSubskill.name,
+            atl: firstCategory.subskills?.map((subskill) => subskill.name) || [firstSubskill.name],
+          }));
+        }
+        if (!cancelled) setDataVersion((v) => v + 1);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setAtlHierarchy([]);
+        setBackendError(error.message || "Gagal mengambil rubrik/hierarki ATL dari backend.");
+        setDataVersion((v) => v + 1);
+      });
     return () => {
       cancelled = true;
     };
@@ -319,10 +416,8 @@ export default function criteriamanagement() {
 
   const handleAddCriteria = async () => {
     const chosenSubskills = selectedSubskills.length > 0 ? selectedSubskills : selectedCategorySubskills;
-    const chosenCategoryIds = Array.from(
-      new Set(chosenSubskills.map((subskill) => findCategoryForSubskill(subskill.id)?.id).filter(Boolean))
-    );
-    const chosenCategories = atlHierarchy.filter((category) => chosenCategoryIds.map(String).includes(String(category.id)));
+    const chosenCategory = chosenSubskills.length > 0 ? findCategoryForSubskill(chosenSubskills[0].id) : selectedCategory;
+    const chosenCategories = chosenCategory ? [chosenCategory] : [];
 
     if (
       !formData.criteriaTopic.trim() ||
@@ -333,10 +428,6 @@ export default function criteriamanagement() {
     ) {
       alert("Mohon isi semua field!");
       return;
-    }
-
-    if (!dummyATL[selectedSubtopic]) {
-      dummyATL[selectedSubtopic] = [];
     }
 
     const normalizedFormData = {
@@ -353,43 +444,45 @@ export default function criteriamanagement() {
     };
 
     if (editingIndex !== null) {
-      // Update existing criteria
       const previousCriterion = dummyATL[selectedSubtopic][editingIndex];
-      dummyATL[selectedSubtopic][editingIndex] = normalizedFormData;
-      syncCriterionReferences(selectedSubtopic, previousCriterion, normalizedFormData);
       const savedCriterion = await updateCriterion(previousCriterion.id, normalizedFormData);
-      if (savedCriterion?.id) {
-        dummyATL[selectedSubtopic][editingIndex] = {
-          ...dummyATL[selectedSubtopic][editingIndex],
-          id: savedCriterion.id,
-          category: savedCriterion.category || normalizedFormData.category,
-          atlCategories: savedCriterion.atlCategories || normalizedFormData.atlCategories,
-          atl: savedCriterion.atl || normalizedFormData.atl,
-          subskillId: savedCriterion.subskillId || normalizedFormData.subskillId,
-          subskillIds: savedCriterion.subskillIds || normalizedFormData.subskillIds,
-          criteriaTopic: savedCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
-        };
+      if (!savedCriterion?.id) {
+        alert("Gagal menyimpan perubahan kriteria ke backend. Pastikan sudah login.");
+        return;
       }
+      dummyATL[selectedSubtopic][editingIndex] = {
+        ...normalizedFormData,
+        id: savedCriterion.id,
+        category: savedCriterion.category || normalizedFormData.category,
+        atlCategories: savedCriterion.atlCategories || normalizedFormData.atlCategories,
+        atl: savedCriterion.atl || normalizedFormData.atl,
+        subskillId: savedCriterion.subskillId || normalizedFormData.subskillId,
+        subskillIds: savedCriterion.subskillIds || normalizedFormData.subskillIds,
+        criteriaTopic: savedCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
+      };
+      syncCriterionReferences(selectedSubtopic, previousCriterion, dummyATL[selectedSubtopic][editingIndex]);
       setEditingIndex(null);
     } else {
-      // Add new criteria
-      dummyATL[selectedSubtopic].push(normalizedFormData);
       const createdCriterion = await createCriterion(selectedSubtopic, normalizedFormData);
-      if (createdCriterion?.id) {
-        dummyATL[selectedSubtopic][dummyATL[selectedSubtopic].length - 1] = {
-          ...normalizedFormData,
-          id: createdCriterion.id,
-          category: createdCriterion.category || normalizedFormData.category,
-          atlCategories: createdCriterion.atlCategories || normalizedFormData.atlCategories,
-          atl: createdCriterion.atl || normalizedFormData.atl,
-          subskillId: createdCriterion.subskillId || normalizedFormData.subskillId,
-          subskillIds: createdCriterion.subskillIds || normalizedFormData.subskillIds,
-          criteriaTopic: createdCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
-        };
+      if (!createdCriterion?.id) {
+        alert("Gagal menyimpan kriteria baru ke backend. Pastikan sudah login.");
+        return;
       }
+      if (!dummyATL[selectedSubtopic]) dummyATL[selectedSubtopic] = [];
+      dummyATL[selectedSubtopic].push({
+        ...normalizedFormData,
+        id: createdCriterion.id,
+        category: createdCriterion.category || normalizedFormData.category,
+        atlCategories: createdCriterion.atlCategories || normalizedFormData.atlCategories,
+        atl: createdCriterion.atl || normalizedFormData.atl,
+        subskillId: createdCriterion.subskillId || normalizedFormData.subskillId,
+        subskillIds: createdCriterion.subskillIds || normalizedFormData.subskillIds,
+        criteriaTopic: createdCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
+      });
     }
 
     persistATLChanges();
+    await refreshSelectedSubtopicFromBackend(selectedSubtopic);
 
     setFormData({
       kriteria: "",
@@ -420,14 +513,15 @@ export default function criteriamanagement() {
       ...existingSubskillIds.map((id) => findSubskillMeta(id)),
       ...existingSubskillNames.map((name) => findSubskillMeta(name)),
     ].filter(Boolean);
-    const uniqueCategories = Array.from(new Map(metas.map((meta) => [String(meta.category.id), meta.category])).values());
-    const uniqueSubskills = Array.from(new Map(metas.map((meta) => [String(meta.subskill.id), meta.subskill])).values());
     const fallbackMeta =
       findSubskillMeta(existing.subskillId) ||
       findSubskillMeta(existing.atl?.[0], existing.category) ||
       { category: selectedCategory, subskill: selectedSubskill };
-    const finalCategories = uniqueCategories.length > 0 ? uniqueCategories : [fallbackMeta.category].filter(Boolean);
-    const finalSubskills = uniqueSubskills.length > 0 ? uniqueSubskills : [fallbackMeta.subskill].filter(Boolean);
+    const normalizedMetas = normalizeMetasToOneCategory(
+      metas.length > 0 ? metas : [fallbackMeta]
+    );
+    const finalCategories = Array.from(new Map(normalizedMetas.map((meta) => [String(meta.category.id), meta.category])).values());
+    const finalSubskills = normalizedMetas.map((meta) => meta.subskill).filter(Boolean);
     setFormData({
       criteriaTopic: existing.criteriaTopic || "",
       kriteria: existing.kriteria,
@@ -447,10 +541,15 @@ export default function criteriamanagement() {
   const handleDeleteCriteria = async (index) => {
     if (confirm("Apakah Anda yakin ingin menghapus kriteria ini?")) {
       const deletedCriterion = dummyATL[selectedSubtopic][index];
+      const deleted = await deleteCriterion(deletedCriterion?.id);
+      if (!deleted) {
+        alert("Gagal menghapus kriteria dari backend. Pastikan sudah login.");
+        return;
+      }
       dummyATL[selectedSubtopic].splice(index, 1);
       removeCriterionReferences(selectedSubtopic, deletedCriterion);
-      await deleteCriterion(deletedCriterion?.id);
       persistATLChanges();
+      await refreshSelectedSubtopicFromBackend(selectedSubtopic);
     }
   };
 
@@ -487,6 +586,13 @@ export default function criteriamanagement() {
 
   return (
     <div className="space-y-8">
+      {backendError && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
+          <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
+          {backendError} Context Setup tidak memakai dummy/localStorage sebagai pengganti data.
+        </div>
+      )}
+
       {/* Subject Selection - Card Based */}
       <div>
         <h3 className="text-sm font-bold uppercase tracking-wider text-text-main-light mb-4">
@@ -601,16 +707,30 @@ export default function criteriamanagement() {
               {currentSubtopics.find((s) => s.id === selectedSubtopic)?.label}
             </p>
           </div>
-          <button
-            onClick={() => {
-              setShowAddForm(!showAddForm);
-              if (showAddForm) handleCancel();
-            }}
-            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-primary-hover"
-          >
-            <span className="material-symbols-outlined text-lg">add</span>
-            Tambah Kriteria
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const topic = currentSubtopics.find((item) => item.id === selectedSubtopic);
+                if (topic) handleDeleteSubtopic(topic);
+              }}
+              disabled={!selectedSubtopic || deletingSubtopicId === selectedSubtopic}
+              className="flex items-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-bold text-red-600 transition-all duration-300 hover:border-red-400 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-lg">delete</span>
+              {deletingSubtopicId === selectedSubtopic ? "Menghapus Subtopik..." : "Hapus Subtopik"}
+            </button>
+            <button
+              onClick={() => {
+                setShowAddForm(!showAddForm);
+                if (showAddForm) handleCancel();
+              }}
+              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-primary-hover"
+            >
+              <span className="material-symbols-outlined text-lg">add</span>
+              Tambah Kriteria
+            </button>
+          </div>
         </div>
 
         {/* Criteria Cards */}
@@ -776,7 +896,7 @@ export default function criteriamanagement() {
                 })}
               </div>
               <p className="mt-2 text-xs text-text-sub-light">
-                Bisa memilih lebih dari satu kategori. Subskill resmi dari kategori terpilih akan masuk ke kandidat pairwise.
+                Satu kriteria hanya memakai satu kategori ATL. Kamu tetap bisa memilih beberapa subskill di dalam kategori itu.
               </p>
             </div>
 
@@ -819,7 +939,7 @@ export default function criteriamanagement() {
                 )}
               </div>
               <div className="mt-3 rounded-xl border border-primary/10 bg-primary/5 px-4 py-3 text-xs font-semibold text-primary">
-                Dipilih: {selectedCategories.map((category) => category.name).join(", ") || "-"} / {selectedSubskills.length} subskill
+                Dipilih: {selectedCategory?.name || "-"} / {selectedSubskills.length} subskill
               </div>
             </div>
 

@@ -1,5 +1,7 @@
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import schoolLogo from "../../assets/Cita_Hati_Christian_School_Logo.jpeg";
+import { getCurrentUser, logoutUser } from "../../services/atlApi";
 
 export default function Sidebar({ user }) {
   const navigate = useNavigate();
@@ -12,7 +14,7 @@ export default function Sidebar({ user }) {
     },
     {
       icon: "groups",
-      label: "Manajemen Siswa",
+      label: "Manajemen Kelas",
       key: "students",
       to: "/students",
     },
@@ -24,7 +26,7 @@ export default function Sidebar({ user }) {
     },
     {
       icon: "poll",
-      label: "Hasil Laporan",
+      label: "Laporan Penilaian",
       key: "report",
       to: "/reports",
     },
@@ -33,7 +35,7 @@ export default function Sidebar({ user }) {
   const configItems = [
     {
       icon: "manage_accounts",
-      label: "Pengaturan User",
+      label: "Manajemen User",
       key: "user",
       to: "/settings/users",
     },
@@ -45,9 +47,71 @@ export default function Sidebar({ user }) {
     },
   ];
 
-  const currentUser = user ?? {
-    name: "Joko Wiryanto",
-    role: "Guru / Evaluator",
+  const fallbackUser = useMemo(() => ({
+    name: "Belum Login",
+    role: "Guest",
+  }), []);
+
+  const normalizeUser = (value) => {
+    if (!value) return null;
+    return {
+      ...value,
+      name: value.name || value.fullName || value.username || fallbackUser.name,
+      role: value.role || value.roleLabel || value.roleGroup || fallbackUser.role,
+      nip: value.nip || "",
+      status: value.status || "",
+    };
+  };
+
+  const readCachedUser = () => {
+    try {
+      const cached = localStorage.getItem("atl_current_user");
+      return cached ? normalizeUser(JSON.parse(cached)) : null;
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const [currentUser, setCurrentUser] = useState(() => readCachedUser() || normalizeUser(user) || fallbackUser);
+
+  useEffect(() => {
+    let cancelled = false;
+    const syncCurrentUser = async () => {
+      const cachedUser = readCachedUser();
+      if (cachedUser && !cancelled) setCurrentUser(cachedUser);
+      const backendUser = await getCurrentUser();
+      const freshCachedUser = readCachedUser();
+      if (!cancelled) setCurrentUser(normalizeUser(backendUser) || freshCachedUser || normalizeUser(user) || fallbackUser);
+    };
+
+    syncCurrentUser();
+    window.addEventListener("focus", syncCurrentUser);
+    window.addEventListener("storage", syncCurrentUser);
+    window.addEventListener("atl-auth-updated", syncCurrentUser);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", syncCurrentUser);
+      window.removeEventListener("storage", syncCurrentUser);
+      window.removeEventListener("atl-auth-updated", syncCurrentUser);
+    };
+  }, [user, fallbackUser]);
+
+  const initials = (currentUser.name || fallbackUser.name)
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+    } catch (error) {
+      localStorage.removeItem("atl_current_user");
+    }
+    window.dispatchEvent(new Event("atl-auth-updated"));
+    navigate("/");
   };
 
   return (
@@ -146,8 +210,8 @@ export default function Sidebar({ user }) {
 
       <div className="border-t border-stone-200 bg-white/95 px-4 py-4">
         <div className="flex items-center gap-3 rounded-2xl border border-stone-200/90 bg-white px-3 py-3 shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]">
-          <div className="flex size-10 items-center justify-center rounded-full bg-primary text-white shadow-[0_10px_22px_rgba(234,179,8,0.18)]">
-            <span className="material-symbols-outlined text-[20px]">person</span>
+          <div className="flex size-10 items-center justify-center rounded-full bg-primary text-xs font-black text-white shadow-[0_10px_22px_rgba(234,179,8,0.18)]">
+            {initials || <span className="material-symbols-outlined text-[20px]">person</span>}
           </div>
 
           <div className="min-w-0 flex-1">
@@ -155,13 +219,14 @@ export default function Sidebar({ user }) {
               {currentUser.name}
             </p>
             <p className="truncate text-xs text-slate-500">{currentUser.role}</p>
+            {currentUser.nip && <p className="truncate text-[10px] font-semibold text-slate-400">{currentUser.nip}</p>}
           </div>
 
           <button
             type="button"
             className="flex size-9 items-center justify-center rounded-xl text-slate-400 transition-all duration-300 hover:bg-stone-100 hover:text-primary"
             aria-label="Logout"
-            onClick={() => navigate("/")}
+            onClick={handleLogout}
           >
             <span className="material-symbols-outlined text-[19px]">logout</span>
           </button>

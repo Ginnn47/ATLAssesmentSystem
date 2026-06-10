@@ -1,19 +1,25 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Sidebar from "./sidebar";
-import { dummyATL, saveATLData } from "../dummyData/dummyATL";
-import { allStudentsData } from "../dummyData/dummyStudents";
-import { getStudents, hydrateTopic, saveAssessment } from "../../services/atlApi";
+import { dummyATL } from "../dummyData/dummyATL";
+import {
+  clearAssessmentDraft,
+  exportReportExcel,
+  getAssessmentDraft,
+  getAssessmentFilterState,
+  getClasses,
+  getReport,
+  getStudents,
+  getTopics,
+  hydrateTopic,
+  previewAssessmentScores,
+  saveAssessment,
+  saveAssessmentDraft,
+  saveAssessmentFilterState,
+  updateAssessmentLiveDraft,
+} from "../../services/atlApi";
 import { getATLCategoryMeta, getRatingMeta, getScoreLevel, getSubjectMeta, hydrateLabelRegistry, ratingOptions } from "../../services/labelRegistry";
 import { getTopicsForSubjectLabel } from "../../services/topicCatalog";
-
-const rubricScoreMap = {
-  "Exceeding Expectation": 0.9,
-  "Meeting Expectation": 0.7,
-  "Developing Expectation": 0.5,
-  "Progressing Toward Expectation": 0.3,
-  "Need Further Improvement": 0.1,
-};
 
 const normalizeRatingLabel = (label) =>
   label === "Need Improvement" ? "Need Further Improvement" : label;
@@ -41,66 +47,201 @@ const getLevelTone = (code) => {
   };
 };
 
-const getCriterionWeight = (weights, criterionTitle, subskill) => {
-  const packageWeight = Object.values(weights.packages || {}).find((pkg) => pkg.title === criterionTitle)?.weights?.[subskill];
-  const flatKey = `${criterionTitle} (${subskill})`;
-  return Number(packageWeight ?? weights[flatKey] ?? weights[subskill] ?? 0);
+const exportColumns = [
+  { key: "no", label: "NO" },
+  { key: "className", label: "CLASS" },
+  { key: "nis", label: "NIS" },
+  { key: "name", label: "NAME" },
+  { key: "subject", label: "SUBJECT" },
+  { key: "subTopic", label: "SUB TOPIC" },
+  { key: "score", label: "FUZZY AHP SCORE" },
+  { key: "predikat", label: "GRADE / PREDIKAT" },
+  { key: "progress", label: "PROGRESS" },
+  { key: "thinking", label: "THINKING SKILLS" },
+  { key: "research", label: "RESEARCH SKILLS" },
+  { key: "communication", label: "COMMUNICATION SKILLS" },
+  { key: "social", label: "SOCIAL SKILLS" },
+  { key: "selfManagement", label: "SELF-MANAGEMENT SKILLS" },
+];
+
+const safeFilePart = (value) => String(value || "ATL").replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, "");
+
+const getCategoryExportValue = (student, categoryName) => {
+  const row = (student.atlCategoryScores || []).find((item) => item.name === categoryName);
+  return Number(row?.score) > 0 ? Number(row.score) : "-";
 };
 
 export default function DetailedInputATL() {
-  const currentUser = { name: "Joko Wiryanto", role: "Guru / Evaluator" };
-  const classOptions = useMemo(() => Object.keys(allStudentsData || {}), []);
-  const [selectedClass, setSelectedClass] = useState(classOptions[0] || "");
+  const [classOptions, setClassOptions] = useState([]);
+  const [selectedClass, setSelectedClass] = useState("");
   const [selectedSubject, setSelectedSubject] = useState("Singing");
   const [selectedTopicIndex, setSelectedTopicIndex] = useState(0);
-  const [apiStudents, setApiStudents] = useState(allStudentsData[selectedClass] || []);
+  const [apiStudents, setApiStudents] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedCriterionIndex, setSelectedCriterionIndex] = useState(0);
   const [ratings, setRatings] = useState({});
   const [note, setNote] = useState("");
   const [topicVersion, setTopicVersion] = useState(0);
-  const [defaultSaved, setDefaultSaved] = useState(false);
-  const [, setDataVersion] = useState(0);
+  const [saveStatus, setSaveStatus] = useState(null);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState("");
+  const [backendError, setBackendError] = useState("");
+  const [backendStatus, setBackendStatus] = useState("idle");
+  const [criteriaStatus, setCriteriaStatus] = useState("unknown");
+  const [backendReportRows, setBackendReportRows] = useState([]);
+  const [localScoreRows, setLocalScoreRows] = useState({});
+  const [previewScore, setPreviewScore] = useState(null);
+  const [previewingScore, setPreviewingScore] = useState(false);
+  const [rubricLoading, setRubricLoading] = useState(false);
+  const [dataVersion, setDataVersion] = useState(0);
+  const [reportVersion, setReportVersion] = useState(0);
   const skipSubjectResetRef = useRef(false);
+  const preferredStudentIdRef = useRef(null);
+  const activeAssessmentKeyRef = useRef("");
+  const hasLocalChangesRef = useRef(false);
+  const currentAssessmentRef = useRef({});
+  const pushRequestRef = useRef(0);
 
   const topics = useMemo(() => getTopicsForSubjectLabel(selectedSubject), [selectedSubject, topicVersion]);
   const selectedTopic = topics[selectedTopicIndex] || topics[0] || { id: "", label: "Pilih Topik" };
   const dataKey = selectedTopic.id;
-  const students = useMemo(() => (apiStudents.length ? apiStudents : allStudentsData[selectedClass] || []), [apiStudents, selectedClass]);
+  const students = useMemo(() => apiStudents, [apiStudents]);
   const criteria = dummyATL[dataKey] || [];
   const criterion = criteria[selectedCriterionIndex] || criteria[0] || null;
-  const weights = dummyATL.savedWeights?.[dataKey] || {};
+  const isTopicReady = (topic) => Boolean(topic?.isAssessable || (topic?.id && (dummyATL[topic.id] || []).length > 0));
+  const topicNeedsCriteria = Boolean(dataKey && !rubricLoading && !isTopicReady(selectedTopic) && criteria.length === 0);
+  const isBackendUpdating = backendStatus === "loading" || rubricLoading;
+  const assessmentUnavailableMessage = topicNeedsCriteria
+    ? "Belum bisa disimpan: kriteria belum tersedia."
+    : "";
+  const canPushAssessment = Boolean(selectedStudent && dataKey && criteria.length > 0 && !topicNeedsCriteria && !rubricLoading && saveStatus !== "pushing");
+
+  const resetSelectionFeedback = () => {
+    setPreviewScore(null);
+    setPreviewingScore(false);
+    setSaveStatus(null);
+    setSaveMessage("");
+  };
+
+  const refreshCurrentAssessmentRef = (overrides = {}) => {
+    currentAssessmentRef.current = {
+      studentId: selectedStudent?.id ?? null,
+      topicId: dataKey,
+      ratings,
+      note,
+      className: selectedClass,
+      subject: selectedSubject,
+      topicLabel: selectedTopic.label,
+      ...overrides,
+    };
+  };
+
+  const persistCurrentDraft = ({ showMessage = true } = {}) => {
+    const current = currentAssessmentRef.current || {};
+    if (!hasLocalChangesRef.current || !current.studentId || !current.topicId) return false;
+    saveAssessmentDraft(current.studentId, current.topicId, current.ratings || {}, {
+      note: current.note || "",
+      className: current.className,
+      subject: current.subject,
+      topicLabel: current.topicLabel,
+    });
+    hasLocalChangesRef.current = false;
+    if (showMessage) {
+      setSaveStatus("draft");
+      setSaveMessage("Draft otomatis tersimpan.");
+    }
+    return true;
+  };
+
+  const handleClassChange = (value) => {
+    persistCurrentDraft();
+    preferredStudentIdRef.current = null;
+    resetSelectionFeedback();
+    setSelectedClass(value);
+  };
+
+  const handleSubjectChange = (value) => {
+    persistCurrentDraft();
+    resetSelectionFeedback();
+    setSelectedSubject(value);
+  };
+
+  const handleTopicChange = (index) => {
+    persistCurrentDraft();
+    resetSelectionFeedback();
+    setSelectedTopicIndex(index);
+  };
+
+  const handleStudentChange = (student) => {
+    persistCurrentDraft();
+    preferredStudentIdRef.current = String(student?.id ?? "");
+    resetSelectionFeedback();
+    setSelectedStudent(student);
+  };
+
+  useEffect(() => {
+    refreshCurrentAssessmentRef();
+  }, [selectedStudent?.id, dataKey, ratings, note, selectedClass, selectedSubject, selectedTopic.label]);
 
   useEffect(() => {
     hydrateLabelRegistry().then(() => setDataVersion((version) => version + 1));
-    const savedDefault = localStorage.getItem("atl_detailed_filter_default");
+    Promise.allSettled([getClasses(), getTopics()])
+      .then(([classesResult, topicsResult]) => {
+        const classes = classesResult.status === "fulfilled" ? classesResult.value : [];
+        const labels = classes.map((item) => item.displayName || item.display_name || item.code).filter(Boolean);
+        if (labels.length > 0) {
+          setClassOptions(labels);
+          setSelectedClass((current) => current || labels[0] || "");
+        }
+        setTopicVersion((version) => version + 1);
+        if (classesResult.status === "rejected" || topicsResult.status === "rejected") {
+          setBackendStatus("offline");
+          setBackendError("Data backend belum tersambung. Menampilkan data terakhir.");
+        } else {
+          setBackendStatus("ready");
+          setBackendError("");
+        }
+      });
+    const sharedFilter = getAssessmentFilterState();
+    const savedDefault = Object.keys(sharedFilter).length > 0
+      ? sharedFilter
+      : localStorage.getItem("atl_detailed_filter_default");
     if (savedDefault) {
       try {
-        const parsed = JSON.parse(savedDefault);
-        if (parsed.className && classOptions.includes(parsed.className)) setSelectedClass(parsed.className);
+        const parsed = typeof savedDefault === "string" ? JSON.parse(savedDefault) : savedDefault;
+        if (parsed.className) setSelectedClass(parsed.className);
         if (parsed.subject) {
           skipSubjectResetRef.current = true;
           setSelectedSubject(parsed.subject);
         }
         if (Number.isFinite(Number(parsed.topicIndex))) setSelectedTopicIndex(Number(parsed.topicIndex));
+        if (parsed.studentId !== undefined && parsed.studentId !== null) preferredStudentIdRef.current = String(parsed.studentId);
       } catch {
         localStorage.removeItem("atl_detailed_filter_default");
       }
     }
-    const syncData = () => {
-      const saved = localStorage.getItem("atl_framework_data");
-      if (saved) Object.assign(dummyATL, JSON.parse(saved));
+    const syncData = () => setDataVersion((version) => version + 1);
+    const syncTopics = () => {
+      setTopicVersion((version) => version + 1);
       setDataVersion((version) => version + 1);
     };
-    const syncTopics = () => setTopicVersion((version) => version + 1);
+    const syncReportData = () => {
+      setDataVersion((version) => version + 1);
+      setReportVersion((version) => version + 1);
+    };
     window.addEventListener("focus", syncData);
     window.addEventListener("storage", syncData);
-    window.addEventListener("atl-data-updated", syncData);
+    window.addEventListener("atl-data-updated", syncReportData);
+    window.addEventListener("atl-drafts-updated", syncData);
+    window.addEventListener("atl-live-drafts-updated", syncData);
     window.addEventListener("atl-topics-updated", syncTopics);
     return () => {
       window.removeEventListener("focus", syncData);
       window.removeEventListener("storage", syncData);
-      window.removeEventListener("atl-data-updated", syncData);
+      window.removeEventListener("atl-data-updated", syncReportData);
+      window.removeEventListener("atl-drafts-updated", syncData);
+      window.removeEventListener("atl-live-drafts-updated", syncData);
       window.removeEventListener("atl-topics-updated", syncTopics);
     };
   }, []);
@@ -110,28 +251,229 @@ export default function DetailedInputATL() {
       skipSubjectResetRef.current = false;
       return;
     }
-    setSelectedTopicIndex(0);
+    const firstAssessableIndex = topics.findIndex((topic) => isTopicReady(topic));
+    setSelectedTopicIndex(firstAssessableIndex >= 0 ? firstAssessableIndex : 0);
   }, [selectedSubject]);
+  useEffect(() => {
+    if (topics.length === 0) {
+      if (selectedTopicIndex !== 0) setSelectedTopicIndex(0);
+      return;
+    }
+    if (!topics[selectedTopicIndex] || !isTopicReady(topics[selectedTopicIndex])) {
+      const firstAssessableIndex = topics.findIndex((topic) => isTopicReady(topic));
+      setSelectedTopicIndex(firstAssessableIndex >= 0 ? firstAssessableIndex : 0);
+    }
+  }, [topics, selectedTopicIndex]);
   useEffect(() => setSelectedCriterionIndex(0), [dataKey]);
   useEffect(() => {
     let cancelled = false;
-    getStudents(selectedClass).then((items) => {
-      if (!cancelled) setApiStudents(items);
-    });
+    if (!selectedClass) {
+      setApiStudents([]);
+      return () => { cancelled = true; };
+    }
+    getStudents(selectedClass)
+      .then((items) => {
+        if (!cancelled) {
+          setApiStudents(items);
+          setBackendError("");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setBackendStatus("offline");
+          setBackendError(error.message || "Data backend belum tersambung. Menampilkan data terakhir.");
+        }
+      });
     return () => { cancelled = true; };
   }, [selectedClass]);
-  useEffect(() => setSelectedStudent(students[0] || null), [students]);
   useEffect(() => {
-    if (!dataKey) return;
-    hydrateTopic(dataKey).then(() => setDataVersion((version) => version + 1));
+    setSelectedStudent((current) => (
+      students.find((student) => String(student.id) === String(current?.id))
+      || students.find((student) => String(student.id) === preferredStudentIdRef.current)
+      || students[0]
+      || null
+    ));
+  }, [students]);
+  useEffect(() => {
+    if (!selectedClass || !selectedSubject) return;
+    saveAssessmentFilterState({
+      className: selectedClass,
+      subject: selectedSubject,
+      topicIndex: selectedTopicIndex,
+      topicId: dataKey,
+      studentId: selectedStudent?.id ?? null,
+    });
+  }, [selectedClass, selectedSubject, selectedTopicIndex, dataKey, selectedStudent?.id]);
+  useEffect(() => {
+    if (!dataKey) {
+      setRubricLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setRubricLoading(true);
+    setBackendStatus("loading");
+    setCriteriaStatus(criteria.length > 0 ? "available" : "loading");
+    setPreviewScore(null);
+    hydrateTopic(dataKey)
+      .then((result) => {
+        if (!cancelled) {
+          if (result?.stale) {
+            setBackendStatus("offline");
+            setBackendError("Data backend belum tersambung. Menampilkan data terakhir.");
+          } else {
+            setBackendStatus("ready");
+            setBackendError("");
+          }
+          const nextCriteriaCount = result?.criteria?.length ?? (dummyATL[dataKey] || []).length;
+          setCriteriaStatus(nextCriteriaCount > 0 ? "available" : "empty");
+          setDataVersion((version) => version + 1);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setBackendStatus("failed");
+          setBackendError(error.message || "Data backend belum tersambung. Menampilkan data terakhir.");
+          setCriteriaStatus((dummyATL[dataKey] || []).length > 0 ? "available" : "empty");
+          setDataVersion((version) => version + 1);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRubricLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [dataKey]);
   useEffect(() => {
-    if (!selectedStudent || !dataKey) {
-      setRatings({});
+    if (!dataKey || !selectedClass) {
+      setBackendReportRows([]);
       return;
     }
-    setRatings({ ...(dummyATL.savedAssessments?.[selectedStudent.id]?.[dataKey] || {}) });
-  }, [selectedStudent?.id, dataKey]);
+    let cancelled = false;
+    getReport(selectedClass, dataKey)
+      .then((report) => {
+        if (!cancelled) setBackendReportRows(report.students || []);
+      })
+      .catch(() => {
+        if (!cancelled) setBackendReportRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataKey, selectedClass, reportVersion]);
+  useEffect(() => {
+    const activeKey = selectedStudent && dataKey ? `${selectedStudent.id}:${dataKey}` : "";
+    const selectionChanged = activeAssessmentKeyRef.current !== activeKey;
+    activeAssessmentKeyRef.current = activeKey;
+    if (!selectedStudent || !dataKey) {
+      setRatings({});
+      setNote("");
+      hasLocalChangesRef.current = false;
+      return;
+    }
+    if (selectionChanged) {
+      setRatings({});
+      setNote("");
+      setPreviewScore(null);
+      setPreviewingScore(false);
+      setSaveStatus(null);
+      setSaveMessage("");
+    }
+    if (rubricLoading) {
+      hasLocalChangesRef.current = false;
+      return;
+    }
+    const draft = getAssessmentDraft(selectedStudent.id, dataKey);
+    setRatings({ ...(draft?.ratings || dummyATL.savedAssessments?.[selectedStudent.id]?.[dataKey] || {}) });
+    setNote(draft?.note || "");
+    const hasLiveDraft = draft?.__source === "live";
+    hasLocalChangesRef.current = hasLiveDraft;
+    if (hasLiveDraft) {
+      setSaveStatus("editing");
+      setSaveMessage("Nilai siap disimpan ke laporan.");
+    } else if (selectionChanged && draft) {
+      setSaveStatus("draft");
+      setSaveMessage("Draft tersimpan.");
+    } else if (selectionChanged) {
+      setSaveStatus(null);
+      setSaveMessage("");
+    }
+  }, [selectedStudent?.id, dataKey, dataVersion, rubricLoading]);
+  useEffect(() => {
+    const studentId = selectedStudent?.id;
+    if (!studentId || !dataKey || rubricLoading || topicNeedsCriteria || criteria.length === 0) return undefined;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setPreviewingScore(true);
+      previewAssessmentScores([
+        { studentId, topic: dataKey, ratings },
+      ])
+        .then((scores) => {
+          if (!cancelled) {
+            const score = scores[String(studentId)];
+            setPreviewScore(score ? { ...score, studentId: String(studentId), topicId: dataKey } : null);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setPreviewScore(null);
+        })
+        .finally(() => {
+          if (!cancelled) setPreviewingScore(false);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [selectedStudent, dataKey, ratings, rubricLoading, topicNeedsCriteria, criteria.length]);
+
+  useEffect(() => {
+    if (!rubricLoading && !topicNeedsCriteria && criteria.length > 0 && saveStatus === "failed") {
+      setSaveStatus(null);
+      setSaveMessage("");
+    }
+  }, [rubricLoading, topicNeedsCriteria, criteria.length, saveStatus]);
+
+  useEffect(() => {
+    if (!dataKey || rubricLoading || topicNeedsCriteria || criteria.length === 0 || students.length === 0) {
+      setLocalScoreRows({});
+      return undefined;
+    }
+    const items = students
+      .map((student) => {
+        const draft = getAssessmentDraft(student.id, dataKey);
+        const cachedRatings = dummyATL.savedAssessments?.[student.id]?.[dataKey];
+        const studentRatings = draft?.ratings || cachedRatings || null;
+        if (!studentRatings || Object.keys(studentRatings).length === 0) return null;
+        return { studentId: student.id, topic: dataKey, ratings: studentRatings };
+      })
+      .filter(Boolean);
+
+    if (items.length === 0) {
+      setLocalScoreRows({});
+      return undefined;
+    }
+
+    let cancelled = false;
+    previewAssessmentScores(items)
+      .then((scores) => {
+        if (cancelled) return;
+        setLocalScoreRows(
+          Object.fromEntries(
+            Object.entries(scores || {}).map(([studentId, score]) => [
+              String(studentId),
+              Number(score?.rawScore ?? score?.score ?? 0),
+            ])
+          )
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setLocalScoreRows({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [students, dataKey, dataVersion, rubricLoading, topicNeedsCriteria, criteria.length]);
 
   const criterionRating = useMemo(() => {
     if (!criterion) return "";
@@ -142,91 +484,173 @@ export default function DetailedInputATL() {
     criteria.filter((item) => (item.atl || []).some((atl) => ratings[`${dataKey}_${item.kriteria}_${atl}`])).length
   ), [criteria, ratings, dataKey]);
 
-  const calculateScoreFromRatings = (ratingMap) => {
-    let total = 0;
-    let totalWeight = 0;
-    criteria.forEach((item) => {
-      (item.atl || []).forEach((atl) => {
-        const rating = normalizeRatingLabel(ratingMap[`${dataKey}_${item.kriteria}_${atl}`]);
-        const score = rubricScoreMap[rating];
-        const weight = getCriterionWeight(weights, item.kriteria, atl);
-        if (score && weight > 0) {
-          total += score * weight;
-          totalWeight += weight;
-        }
-      });
-    });
-    return totalWeight > 0 ? ((total / totalWeight) * 100).toFixed(1) : "0.0";
-  };
-
-  const calculatedScore = useMemo(() => calculateScoreFromRatings(ratings), [criteria, ratings, weights, dataKey]);
   const studentScores = useMemo(
-    () =>
-      students.reduce((acc, student) => {
-        const savedRatings = dummyATL.savedAssessments?.[student.id]?.[dataKey] || {};
-        acc[student.id] = calculateScoreFromRatings(savedRatings);
-        return acc;
-      }, {}),
-    [students, criteria, weights, dataKey, ratings]
+    () => Object.fromEntries(
+      backendReportRows.map((student) => [
+        String(student.id),
+        Number(student.rawScore ?? student.score ?? 0),
+      ])
+    ),
+    [backendReportRows]
   );
+  const backendSavedScore = Number(studentScores[String(selectedStudent?.id)] || 0);
+  const localSavedScore = Number(localScoreRows[String(selectedStudent?.id)] || 0);
+  const activePreviewScore = (
+    previewScore?.studentId === String(selectedStudent?.id)
+    && previewScore?.topicId === dataKey
+  ) ? previewScore : null;
+  const displayedScore = activePreviewScore?.rawScore ?? (localSavedScore > 0 ? localSavedScore : backendSavedScore);
+  const calculatedScore = Number(displayedScore).toFixed(2);
+  const scoreIsPreview = Boolean(activePreviewScore);
 
   const handleSelectRating = (levelLabel) => {
-    if (!criterion || !selectedStudent || !dataKey) return;
-    setRatings((prev) => {
-      const next = { ...prev };
-      (criterion.atl || []).forEach((atl) => {
-        next[`${dataKey}_${criterion.kriteria}_${atl}`] = levelLabel;
-      });
-      if (!dummyATL.savedAssessments) dummyATL.savedAssessments = {};
-      if (!dummyATL.savedAssessments[selectedStudent.id]) dummyATL.savedAssessments[selectedStudent.id] = {};
-      dummyATL.savedAssessments[selectedStudent.id][dataKey] = next;
-      saveATLData(dummyATL);
-      return next;
+    if (!criterion || !selectedStudent || !dataKey || topicNeedsCriteria) return;
+    const next = { ...ratings };
+    (criterion.atl || []).forEach((atl) => {
+      next[`${dataKey}_${criterion.kriteria}_${atl}`] = levelLabel;
     });
+    setRatings(next);
+    refreshCurrentAssessmentRef({ ratings: next });
+    updateAssessmentLiveDraft(selectedStudent.id, dataKey, next, {
+      note,
+      className: selectedClass,
+      subject: selectedSubject,
+      topicLabel: selectedTopic.label,
+    });
+    hasLocalChangesRef.current = true;
+    setSaveStatus("editing");
+    setSaveMessage("Nilai siap disimpan ke laporan.");
   };
 
-  const persist = async () => {
-    if (!selectedStudent || !dataKey) return false;
-    if (!dummyATL.savedAssessments) dummyATL.savedAssessments = {};
-    if (!dummyATL.savedAssessments[selectedStudent.id]) dummyATL.savedAssessments[selectedStudent.id] = {};
-    dummyATL.savedAssessments[selectedStudent.id][dataKey] = { ...ratings };
-    saveATLData(dummyATL);
-    await saveAssessment(selectedStudent.id, dataKey, ratings);
-    return true;
+  const handleSaveDraft = () => {
+    if (!selectedStudent || !dataKey) return;
+    refreshCurrentAssessmentRef();
+    saveAssessmentDraft(selectedStudent.id, dataKey, ratings, {
+      note,
+      className: selectedClass,
+      subject: selectedSubject,
+      topicLabel: selectedTopic.label,
+    });
+    hasLocalChangesRef.current = false;
+    setSaveStatus("draft");
+    setSaveMessage("Draft tersimpan.");
   };
 
-  const saveDefaultSelection = () => {
-    localStorage.setItem(
-      "atl_detailed_filter_default",
-      JSON.stringify({
+  const handlePush = async () => {
+    if (!canPushAssessment) {
+      setSaveStatus("failed");
+      setSaveMessage(
+        rubricLoading
+          ? "Tunggu sampai kriteria selesai dimuat."
+          : assessmentUnavailableMessage || "Pilih siswa dan kriteria yang valid sebelum menyimpan."
+      );
+      return false;
+    }
+    const snapshot = {
+      studentId: selectedStudent.id,
+      topicId: dataKey,
+      ratings: { ...ratings },
+      note,
+      key: `${selectedStudent.id}:${dataKey}`,
+    };
+    const requestId = pushRequestRef.current + 1;
+    pushRequestRef.current = requestId;
+    refreshCurrentAssessmentRef(snapshot);
+    setSaveStatus("pushing");
+    setSaveMessage("Menyimpan nilai...");
+    const result = await saveAssessment(snapshot.studentId, snapshot.topicId, snapshot.ratings, { teacherNote: snapshot.note });
+    const stillCurrent = pushRequestRef.current === requestId && activeAssessmentKeyRef.current === snapshot.key;
+    if (result?.synced) {
+      clearAssessmentDraft(snapshot.studentId, snapshot.topicId);
+      if (stillCurrent) {
+        hasLocalChangesRef.current = false;
+        setSaveStatus("backend");
+        setSaveMessage("Nilai berhasil masuk laporan.");
+      }
+    } else if (stillCurrent) {
+      setSaveStatus("failed");
+      setSaveMessage(result?.error || "Gagal menyimpan nilai.");
+    }
+    return result;
+  };
+
+  const handleExportExcel = async () => {
+    if (!selectedClass || !dataKey) return;
+    setExporting(true);
+    setExportMessage("Menyiapkan Excel dari nilai tersimpan...");
+    try {
+      const report = await getReport(selectedClass, dataKey);
+      const rows = (report.students || []).map((student, index) => ({
+        no: index + 1,
         className: selectedClass,
+        nis: student.nis || student.id || "-",
+        name: student.name || "-",
         subject: selectedSubject,
-        topicIndex: selectedTopicIndex,
-        topicId: selectedTopic.id,
-      })
-    );
-    setDefaultSaved(true);
-    window.setTimeout(() => setDefaultSaved(false), 1800);
+        subTopic: selectedTopic.label,
+        score: Number.isFinite(Number(student.rawScore ?? student.score)) ? Number(Number(student.rawScore ?? student.score).toFixed(2)) : "-",
+        predikat: student.predikat || student.atlLevel?.label || "-",
+        progress: student.progress || "-",
+        thinking: getCategoryExportValue(student, "Thinking Skills"),
+        research: getCategoryExportValue(student, "Research Skills"),
+        communication: getCategoryExportValue(student, "Communication Skills"),
+        social: getCategoryExportValue(student, "Social Skills"),
+        selfManagement: getCategoryExportValue(student, "Self-Management Skills"),
+      }));
+      if (rows.length === 0) throw new Error("Belum ada nilai tersimpan untuk diexport.");
+
+      const filename = `ATL_Report_${safeFilePart(selectedClass)}_${safeFilePart(selectedSubject)}_${safeFilePart(selectedTopic.label)}.xlsx`;
+      const result = await exportReportExcel({
+        meta: {
+          className: selectedClass,
+          subject: selectedSubject,
+          subTopic: selectedTopic.label,
+          rowCount: rows.length,
+          generatedAt: new Date().toLocaleString("id-ID"),
+          filename,
+        },
+        columns: exportColumns,
+        rows,
+      });
+      const url = window.URL.createObjectURL(result.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.filename || filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setExportMessage(`Excel berhasil dibuat dari ${rows.length} siswa.`);
+    } catch (error) {
+      setExportMessage(error?.message || "Export Excel gagal.");
+    } finally {
+      setExporting(false);
+    }
   };
 
   const progress = criteria.length ? Math.round((scoredCriteriaCount / criteria.length) * 100) : 0;
-  const dominantWeight = criterion ? Math.max(...(criterion.atl || []).map((atl) => getCriterionWeight(weights, criterion.kriteria, atl)), 0) : 0;
   const scoreCategory = getScoreCategory(calculatedScore);
+  const saveStatusClass = {
+    backend: "bg-emerald-100 text-emerald-700",
+    draft: "bg-sky-100 text-sky-700",
+    editing: "bg-amber-100 text-amber-800",
+    pushing: "bg-blue-100 text-blue-700",
+    failed: "bg-red-100 text-red-700",
+  }[saveStatus] || "bg-stone-100 text-stone-700";
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-stone-50">
-      <Sidebar user={currentUser} />
+      <Sidebar />
       <main className="relative flex flex-1 flex-col overflow-hidden bg-stone-50">
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
           <div className="mx-auto max-w-[1500px] space-y-5 rounded-[1.75rem] bg-white p-5 shadow-[0_24px_60px_rgba(15,23,42,0.08)]">
             <header className="flex flex-col gap-4 border-b border-stone-100 pb-5 xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <span className="rounded bg-primary/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-primary-hover">
-                  Assessment / ATL Input
+                  Input Nilai ATL
                 </span>
                 <h1 className="mt-3 text-3xl font-black text-text-main-light">Input Penilaian ATL</h1>
                 <p className="mt-2 text-sm text-text-sub-light">
-                  Mode detail dengan rubrik lengkap untuk memahami kriteria sebelum menilai.
+                  Isi nilai satu siswa dengan panduan rubrik yang lengkap.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -245,48 +669,103 @@ export default function DetailedInputATL() {
                 </div>
                 <button
                   type="button"
-                  onClick={saveDefaultSelection}
-                  className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-5 py-2.5 text-sm font-black text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5"
+                  onClick={handlePush}
+                  disabled={!canPushAssessment}
+                  className="inline-flex items-center gap-2 rounded-xl bg-stone-950 px-6 py-2.5 text-sm font-black text-white shadow-lg shadow-stone-950/15 transition-all hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <span className="material-symbols-outlined text-[18px]">save_as</span>
-                  {defaultSaved ? "Default Tersimpan" : "Simpan Default"}
-                </button>
-                <button
-                  type="button"
-                  onClick={persist}
-                  className="inline-flex items-center gap-2 rounded-xl bg-stone-950 px-6 py-2.5 text-sm font-black text-white shadow-lg shadow-stone-950/15 transition-all hover:bg-stone-800"
-                >
-                  <span className="material-symbols-outlined text-[18px]">save</span>
-                  Simpan
+                  <span className="material-symbols-outlined text-[18px]">cloud_upload</span>
+                  {saveStatus === "pushing" ? "Menyimpan..." : "Simpan Penilaian"}
                 </button>
               </div>
             </header>
+
+            {backendError && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-800">
+                <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
+                {backendError}
+              </div>
+            )}
+            {isBackendUpdating && criteria.length > 0 && (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 px-5 py-3 text-xs font-black text-sky-700">
+                <span className="material-symbols-outlined mr-2 align-middle text-[16px]">sync</span>
+                Mohon tunggu sebentar, sistem sedang memuat data terbaru dari backend. Tampilan tetap memakai data terakhir.
+              </div>
+            )}
+
+            <section className="flex flex-col gap-4 rounded-2xl border border-amber-300 bg-amber-50 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex max-w-4xl items-start gap-3">
+                <span className="material-symbols-outlined mt-0.5 text-[19px] text-amber-600">info</span>
+                <div>
+                  <p className="text-sm font-black text-stone-900">Isi nilai dulu, lalu simpan saat sudah siap.</p>
+                  <p className="mt-1 text-xs font-semibold leading-5 text-stone-600">
+                    Perubahan langsung muncul di mode <b>Detailed</b> dan <b>Batch</b>.
+                    <b> Simpan Sementara</b> untuk lanjut nanti.
+                    Pilih <b>Simpan Penilaian</b> agar nilai masuk ke laporan.
+                  </p>
+                  {saveStatus && <p className={`mt-2 inline-flex rounded-lg px-2.5 py-1 text-[11px] font-black ${saveStatusClass}`}>{saveMessage}</p>}
+                  {exportMessage && <p className="mt-2 text-[11px] font-bold text-emerald-700">{exportMessage}</p>}
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-3">
+                <span className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-xs font-black text-stone-700">
+                  Progress {progress}%
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSaveDraft}
+                  className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-5 py-2.5 text-sm font-black text-stone-700 transition-all hover:border-amber-300 hover:bg-amber-100"
+                >
+                  <span className="material-symbols-outlined text-[18px]">save</span>
+                  Simpan Sementara
+                </button>
+              </div>
+            </section>
 
         <section className="grid gap-4 lg:grid-cols-[2fr_1fr_220px]">
           <div className="grid gap-5 rounded-2xl border border-stone-200 bg-white p-4 md:grid-cols-[320px_1fr]">
             <div className="space-y-3">
               <label className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Kelas</label>
-              <select value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)} className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-black">
+              <select value={selectedClass} onChange={(e) => handleClassChange(e.target.value)} className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-black">
                 {classOptions.map((cls) => <option key={cls}>{cls}</option>)}
               </select>
               <label className="block text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Mata Pelajaran</label>
-              <select value={selectedSubject} onChange={(e) => setSelectedSubject(e.target.value)} className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-black text-red-600">
+              <select value={selectedSubject} onChange={(e) => handleSubjectChange(e.target.value)} className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-black text-red-600">
                 {["Singing", "IPA", "Math"].map((item) => <option key={item}>{item}</option>)}
               </select>
             </div>
             <div>
               <p className="mb-4 text-[10px] font-black uppercase tracking-[0.24em] text-stone-500">Pilih Topik Pembelajaran</p>
               <div className="flex flex-wrap gap-2">
-                {topics.map((topic, index) => (
-                  <button key={topic.id} onClick={() => setSelectedTopicIndex(index)} className={`rounded-xl px-5 py-3 text-sm font-black ${index === selectedTopicIndex ? "bg-primary text-white shadow-lg shadow-primary/25" : "border border-stone-200 bg-white text-stone-900"}`}>
-                    {topic.label}
-                  </button>
-                ))}
+                {topics.map((topic, index) => {
+                  const disabled = !isTopicReady(topic);
+                  return (
+                    <span key={topic.id} className="group relative inline-flex">
+                      <button
+                        onClick={() => handleTopicChange(index)}
+                        disabled={disabled}
+                        className={`rounded-xl px-5 py-3 text-sm font-black ${
+                          disabled
+                            ? "cursor-not-allowed border border-stone-200 bg-stone-100 text-stone-400 opacity-60"
+                            : index === selectedTopicIndex
+                              ? "bg-primary text-white shadow-lg shadow-primary/25"
+                              : "border border-stone-200 bg-white text-stone-900"
+                        }`}
+                      >
+                        {topic.label}
+                      </button>
+                      {disabled && (
+                        <span className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 hidden w-56 -translate-x-1/2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-center text-[11px] font-bold text-stone-500 shadow-lg group-hover:block">
+                          Belum bisa dinilai, kriteria belum tersedia.
+                        </span>
+                      )}
+                    </span>
+                  );
+                })}
               </div>
             </div>
           </div>
               <div className="rounded-2xl border border-stone-200 bg-white p-4">
-            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Track Progress Penilaian</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Progres Penilaian</p>
             <div className="mt-4 flex items-center gap-4">
               <div className="flex h-24 w-24 items-center justify-center rounded-full border-[10px] border-primary text-lg font-black text-stone-900">{progress}%</div>
               <div className="flex-1">
@@ -296,10 +775,17 @@ export default function DetailedInputATL() {
             </div>
           </div>
           <div className="rounded-2xl border border-stone-200 bg-white p-5 text-center">
-            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Real-time Score (ATL)</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">
+              {scoreIsPreview ? "(Realtime Calculation)" : "Recent Calculation Saved"}
+            </p>
             <div className="mt-5 text-5xl font-black text-stone-900">{calculatedScore}</div>
             <p className="mt-1 text-sm font-bold text-stone-500">/100</p>
             <span className={`mt-4 inline-flex rounded-full px-3 py-1 text-xs font-black uppercase ${scoreCategory.className}`}>{scoreCategory.label}</span>
+            {scoreIsPreview && (
+              <p className="mt-3 text-[10px] font-bold text-amber-700">
+                {previewingScore ? "Menghitung..." : `Recent Calculation Saved: ${backendSavedScore.toFixed(2)}/100`}
+              </p>
+            )}
           </div>
         </section>
 
@@ -312,10 +798,14 @@ export default function DetailedInputATL() {
             <div className="max-h-[620px] space-y-2 overflow-y-auto pr-1">
               {students.map((student) => {
                 const active = selectedStudent?.id === student.id;
-                const studentScore = studentScores[student.id] || "0.0";
+                const studentScore = Number(
+                  active && activePreviewScore
+                    ? activePreviewScore.rawScore
+                    : localScoreRows[String(student.id)] ?? studentScores[String(student.id)] ?? 0
+                ).toFixed(2);
                 const studentCategory = getScoreCategory(studentScore);
                 return (
-                  <button key={student.id} onClick={() => setSelectedStudent(student)} className={`w-full rounded-xl border p-3 text-left transition ${active ? "border-primary bg-primary/5 shadow-md" : "border-stone-200 bg-white"}`}>
+                  <button key={student.id} onClick={() => handleStudentChange(student)} className={`w-full rounded-xl border p-3 text-left transition ${active ? "border-primary bg-primary/5 shadow-md" : "border-stone-200 bg-white"}`}>
                     <div className="flex items-center gap-3">
                       <div className={`flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${student.avatarTone} text-xs font-black text-stone-900`}>{student.initials}</div>
                       <div className="min-w-0">
@@ -388,7 +878,6 @@ export default function DetailedInputATL() {
                   {ratingOptions.map((option) => {
                     const tone = getLevelTone(option.code);
                     const active = criterionRating === option.label;
-                    const weight = dominantWeight * rubricScoreMap[option.label];
                     return (
                       <button
                         key={option.code}
@@ -410,7 +899,28 @@ export default function DetailedInputATL() {
                 <div className="mt-6 space-y-5">
                   <div className="rounded-2xl border border-stone-200 bg-white p-5">
                     <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Catatan Guru <span className="normal-case tracking-normal">(opsional)</span></p>
-                    <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={250} placeholder="Tulis catatan tentang performa siswa pada kriteria ini..." className="mt-3 h-24 w-full resize-none rounded-xl border border-stone-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
+                    <textarea
+                      value={note}
+                      onChange={(e) => {
+                        const nextNote = e.target.value;
+                        setNote(nextNote);
+                        refreshCurrentAssessmentRef({ note: nextNote });
+                        if (selectedStudent && dataKey) {
+                          updateAssessmentLiveDraft(selectedStudent.id, dataKey, ratings, {
+                            note: nextNote,
+                            className: selectedClass,
+                            subject: selectedSubject,
+                            topicLabel: selectedTopic.label,
+                          });
+                        }
+                        hasLocalChangesRef.current = true;
+                        setSaveStatus("editing");
+                        setSaveMessage("Nilai siap disimpan ke laporan.");
+                      }}
+                      maxLength={250}
+                      placeholder="Tulis catatan tentang performa siswa pada kriteria ini..."
+                      className="mt-3 h-24 w-full resize-none rounded-xl border border-stone-200 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                    />
                     <p className="text-right text-xs text-stone-400">{note.length} / 250</p>
                   </div>
                   <div className="rounded-2xl border border-stone-200 bg-white p-5">
@@ -445,7 +955,17 @@ export default function DetailedInputATL() {
                 </div>
               </>
             ) : (
-              <div className="py-20 text-center text-sm font-bold text-stone-400">Belum ada kriteria untuk topik ini.</div>
+              <div className="py-20 text-center">
+                <span className="material-symbols-outlined text-5xl text-stone-300">rule</span>
+                <p className="mt-3 text-sm font-black text-stone-500">
+                  {rubricLoading && criteriaStatus !== "empty"
+                    ? "Mohon tunggu sebentar, sedang loading data dari backend."
+                    : assessmentUnavailableMessage || "Belum ada kriteria untuk topik ini."}
+                </p>
+                <p className="mt-2 text-xs font-semibold text-stone-400">
+                  Buka Criteria Management untuk membuat rubrik sebelum nilai bisa masuk ke laporan.
+                </p>
+              </div>
             )}
           </section>
         </section>

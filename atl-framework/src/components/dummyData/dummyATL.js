@@ -45,8 +45,8 @@ const baseATL = {
       NFI: "No awareness of group sound or control.",
       PTE: "Difficulty controlling volume.",
       DE: "Volume is sometimes unbalanced.",
-      ME: "Good ensemble balance.",
-      EE: "Excellent ensemble balance.",
+      ME: "Maintains balanced ensemble contribution.",
+      EE: "Shows highly polished ensemble balance.",
     }),
     item("Responding", "Focus & Attention", ["Self-Management Skills", "Thinking Skills"], [
       "State of Mind",
@@ -280,15 +280,14 @@ if (!baseATL.savedWeights) baseATL.savedWeights = {};
 if (!baseATL.savedAssessments) baseATL.savedAssessments = {};
 
 const getPersistentData = () => {
-  const saved = localStorage.getItem("atl_framework_data");
-  if (!saved) return baseATL;
-
-  const parsed = JSON.parse(saved);
-  return parsed.__version === ATL_DATA_VERSION ? parsed : baseATL;
+  return {
+    savedWeights: {},
+    savedAssessments: {},
+  };
 };
 
 export const dummyATL = getPersistentData();
 export const saveATLData = (data) => {
-  localStorage.setItem("atl_framework_data", JSON.stringify({ ...data, __version: ATL_DATA_VERSION }));
+  Object.assign(dummyATL, data || {});
   window.dispatchEvent(new Event("atl-data-updated"));
 };

@@ -1,5 +1,3 @@
-const TOPIC_STORAGE_KEY = "atl_custom_subtopics_v1";
-
 export const baseSubjectCatalog = [
   {
     id: "singing",
@@ -41,26 +39,61 @@ const slugify = (value) =>
     .replace(/^_+|_+$/g, "")
     .slice(0, 40);
 
-const readCustomTopics = () => {
+const SUBJECT_CATALOG_CACHE_KEY = "atl_subject_catalog_snapshot";
+
+const readCachedSubjects = () => {
+  if (typeof window === "undefined") return [];
   try {
-    return JSON.parse(localStorage.getItem(TOPIC_STORAGE_KEY) || "{}");
-  } catch (error) {
-    return {};
+    const parsed = JSON.parse(window.localStorage.getItem(SUBJECT_CATALOG_CACHE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    window.localStorage.removeItem(SUBJECT_CATALOG_CACHE_KEY);
+    return [];
   }
 };
 
-const writeCustomTopics = (items) => {
-  localStorage.setItem(TOPIC_STORAGE_KEY, JSON.stringify(items));
-  window.dispatchEvent(new Event("atl-topics-updated"));
+const writeCachedSubjects = (subjects) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SUBJECT_CATALOG_CACHE_KEY, JSON.stringify(subjects || []));
+  } catch {
+    // The UI can still use in-memory data when localStorage is unavailable.
+  }
 };
 
-export const getSubjectData = () => {
-  const customTopics = readCustomTopics();
-  return baseSubjectCatalog.map((subject) => ({
-    ...subject,
-    topics: [...subject.topics, ...(customTopics[subject.id] || [])],
-  }));
+let subjectCatalogCache = readCachedSubjects();
+
+const normalizeSubject = (subject) => {
+  const id = subject.id || subject.code || String(subject.label || "").toLowerCase();
+  const baseSubject = baseSubjectCatalog.find((item) => item.id === id);
+  return {
+    id,
+    label: subject.label || subject.name || baseSubject?.label || id,
+    batchLabel: subject.batchLabel || baseSubject?.batchLabel || subject.label || subject.name || id,
+    aliases: Array.from(new Set([id, subject.label, subject.name, subject.batchLabel, baseSubject?.label, baseSubject?.batchLabel].filter(Boolean))),
+    topics: Array.isArray(subject.topics)
+      ? subject.topics.map((topic) => ({
+          id: topic.id || topic.code,
+          label: topic.label || topic.name || topic.id || topic.code,
+          description: topic.description || "",
+          isCustom: Boolean(topic.isCustom),
+          isActive: topic.isActive !== false,
+          contextAvailable: Boolean(topic.contextAvailable),
+          rubricCount: Number(topic.rubricCount || 0),
+          isAssessable: Boolean(topic.isAssessable),
+        }))
+      : [],
+  };
 };
+
+export const setSubjectData = (subjects = []) => {
+  subjectCatalogCache = Array.isArray(subjects) ? subjects.map(normalizeSubject) : [];
+  if (subjectCatalogCache.length > 0) writeCachedSubjects(subjectCatalogCache);
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("atl-topics-updated"));
+  return subjectCatalogCache;
+};
+
+export const getSubjectData = () => subjectCatalogCache;
 
 export const getSubjectTopicMapByLabel = () =>
   getSubjectData().reduce((acc, subject) => {
@@ -69,14 +102,21 @@ export const getSubjectTopicMapByLabel = () =>
   }, {});
 
 export const getTopicsForSubjectLabel = (subjectLabel) =>
-  getSubjectTopicMapByLabel()[subjectLabel] || [];
+  getSubjectTopicMapByLabel()[subjectLabel] ||
+  getSubjectData().find((subject) => (subject.aliases || []).includes(subjectLabel))?.topics ||
+  [];
 
 export const addCustomSubtopic = (subjectId, label, description = "") => {
-  const subject = baseSubjectCatalog.find((item) => item.id === subjectId);
+  const topic = createCustomSubtopicDraft(subjectId, label, description);
+  if (!topic) return null;
+  return saveCustomSubtopic(subjectId, topic);
+};
+
+export const createCustomSubtopicDraft = (subjectId, label, description = "") => {
+  const subject = subjectCatalogCache.find((item) => item.id === subjectId);
   if (!subject || !label.trim()) return null;
 
-  const customTopics = readCustomTopics();
-  const existingTopics = [...subject.topics, ...(customTopics[subjectId] || [])];
+  const existingTopics = subject.topics || [];
   const baseId = `${subjectId}_${slugify(label) || "custom_topic"}`;
   let id = baseId;
   let counter = 2;
@@ -90,8 +130,23 @@ export const addCustomSubtopic = (subjectId, label, description = "") => {
     label: label.trim(),
     description: description.trim() || "Subtopik tambahan",
     isCustom: true,
+    isActive: true,
+    contextAvailable: false,
+    rubricCount: 0,
+    isAssessable: false,
   };
-  customTopics[subjectId] = [...(customTopics[subjectId] || []), topic];
-  writeCustomTopics(customTopics);
+  return topic;
+};
+
+export const saveCustomSubtopic = (subjectId, topic) => {
+  if (!topic?.id) return null;
+  const subjectIndex = subjectCatalogCache.findIndex((item) => item.id === subjectId);
+  if (subjectIndex < 0) return topic;
+  const existing = subjectCatalogCache[subjectIndex].topics || [];
+  if (existing.some((item) => item.id === topic.id)) return topic;
+  subjectCatalogCache = subjectCatalogCache.map((subject, index) => (
+    index === subjectIndex ? { ...subject, topics: [...existing, topic] } : subject
+  ));
+  window.dispatchEvent(new Event("atl-topics-updated"));
   return topic;
 };

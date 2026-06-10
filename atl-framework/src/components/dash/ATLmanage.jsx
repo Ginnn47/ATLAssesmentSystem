@@ -1,10 +1,18 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import Sidebar from "./sidebar";
 import criteriamanagement from "./criteriamanagement";
 import ExpertManagement from "./expertmanagement";
 import { dummyATL } from "../dummyData/dummyATL";
-import { hydrateTopic } from "../../services/atlApi";
+import { getTopics, hydrateTopic } from "../../services/atlApi";
 import { getATLCategoryMeta, getSubskillMeta } from "../../services/labelRegistry";
+
+const getFittedSkillTitleStyle = (title) => {
+  const length = String(title || "").length;
+  if (length > 42) return { fontSize: "0.68rem", lineHeight: "0.85rem" };
+  if (length > 32) return { fontSize: "0.75rem", lineHeight: "0.95rem" };
+  if (length > 24) return { fontSize: "0.85rem", lineHeight: "1.05rem" };
+  return { fontSize: "1rem", lineHeight: "1.2rem" };
+};
 
 const getATLStyle = (atl) => {
   const meta = getATLCategoryMeta(atl);
@@ -40,6 +48,25 @@ const getDominanceTone = (label) => {
   return "bg-green-100 text-green-700 ring-green-200";
 };
 
+const getRatingChipClass = (code) => {
+  const normalized = String(code || "").toUpperCase();
+  if (normalized === "EE") return "bg-emerald-100 text-emerald-700 ring-emerald-200";
+  if (normalized === "ME") return "bg-blue-100 text-blue-700 ring-blue-200";
+  if (normalized === "DE") return "bg-amber-100 text-amber-700 ring-amber-200";
+  if (normalized === "PTE") return "bg-orange-100 text-orange-700 ring-orange-200";
+  if (normalized === "NFI") return "bg-red-100 text-red-700 ring-red-200";
+  return "bg-stone-100 text-stone-600 ring-stone-200";
+};
+
+const getRatingFullLabel = (code) => {
+  const normalized = String(code || "").toUpperCase();
+  if (normalized === "EE") return "Exceeding Expectation";
+  if (normalized === "ME") return "Meeting Expectation";
+  if (normalized === "DE") return "Developing Expectation";
+  if (normalized === "PTE") return "Progressing Toward Expectation";
+  return "Need Further Improvement";
+};
+
 const prettyTopic = (topicId) =>
   topicId
     .replace(/^singing_/, "")
@@ -49,19 +76,20 @@ const prettyTopic = (topicId) =>
 
 const SUMMARY_TOPIC_KEY = "atl_manage_summary_topic";
 const getInitialSummaryTopic = () => {
-  if (typeof window === "undefined") return "singing_christmas_carol";
-  const savedTopic = window.localStorage.getItem(SUMMARY_TOPIC_KEY);
-  return savedTopic && dummyATL[savedTopic] ? savedTopic : "singing_christmas_carol";
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(SUMMARY_TOPIC_KEY) || "";
 };
 
 export default function ATLmanage() {
   const [activeTab, setActiveTab] = useState("criteria");
   const [selectedTopic, setSelectedTopic] = useState(getInitialSummaryTopic);
+  const [subjectTopics, setSubjectTopics] = useState([]);
   const [showWeightDetail, setShowWeightDetail] = useState(false);
-  const [, setDataVersion] = useState(0);
+  const [backendError, setBackendError] = useState("");
+  const [dataVersion, setDataVersion] = useState(0);
 
   const handleSummaryTopicChange = (topicId) => {
-    const nextTopic = dummyATL[topicId] ? topicId : "singing_christmas_carol";
+    const nextTopic = topicId || "";
     setSelectedTopic(nextTopic);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(SUMMARY_TOPIC_KEY, nextTopic);
@@ -69,16 +97,71 @@ export default function ATLmanage() {
   };
 
   useEffect(() => {
+    getTopics()
+      .then((subjects) => {
+        setSubjectTopics(subjects || []);
+        const topicIds = (subjects || []).flatMap((subject) => (subject.topics || []).map((topic) => topic.id));
+        setSelectedTopic((current) => {
+          const nextTopic = current && topicIds.includes(current) ? current : topicIds[0] || "";
+          if (nextTopic && typeof window !== "undefined") {
+            window.localStorage.setItem(SUMMARY_TOPIC_KEY, nextTopic);
+          }
+          return nextTopic;
+        });
+        setBackendError("");
+      })
+      .catch((error) => {
+        setBackendError(error.message || "Gagal mengambil daftar topik dari backend.");
+      });
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
-    hydrateTopic(selectedTopic).then(() => {
-      if (!cancelled) setDataVersion((version) => version + 1);
-    });
+    if (!selectedTopic) return () => { cancelled = true; };
+    hydrateTopic(selectedTopic)
+      .then(() => {
+        if (!cancelled) {
+          setBackendError("");
+          setDataVersion((version) => version + 1);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setBackendError(error.message || "Gagal mengambil ringkasan bobot dari backend.");
+          setDataVersion((version) => version + 1);
+        }
+      });
     return () => {
       cancelled = true;
     };
   }, [selectedTopic]);
 
-  const summaryData = useMemo(() => {
+  useEffect(() => {
+    let cancelled = false;
+    const syncWeights = () => {
+      if (!selectedTopic) return;
+      hydrateTopic(selectedTopic)
+        .then(() => {
+          if (!cancelled) {
+            setBackendError("");
+            setDataVersion((version) => version + 1);
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) setBackendError(error.message || "Gagal refresh bobot dari backend.");
+        });
+    };
+    window.addEventListener("atl-weights-updated", syncWeights);
+    window.addEventListener("focus", syncWeights);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("atl-weights-updated", syncWeights);
+      window.removeEventListener("focus", syncWeights);
+    };
+  }, [selectedTopic]);
+
+  const summaryData = (() => {
+    void dataVersion;
     const items = dummyATL[selectedTopic] || [];
     const savedWeights = dummyATL.savedWeights?.[selectedTopic] || {};
     const rows = items.map((item, index) => {
@@ -140,11 +223,22 @@ export default function ATLmanage() {
       : "conic-gradient(#eab308 0% 100%)";
 
     return { rows, distribution, dominantOverall, donut };
-  }, [selectedTopic, dummyATL.savedWeights?.[selectedTopic]]);
+  })();
+
+  const selectedSummaryMeta = (() => {
+    for (const subject of subjectTopics) {
+      const topic = (subject.topics || []).find((item) => item.id === selectedTopic);
+      if (topic) return { subject, topic };
+    }
+    return {
+      subject: null,
+      topic: { id: selectedTopic, label: prettyTopic(selectedTopic) },
+    };
+  })();
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
-      <Sidebar user={{ name: "Joko Wiryanto", role: "Guru / Evaluator" }} />
+      <Sidebar />
 
       {/* Main Content */}
       <main className="relative flex flex-1 flex-col overflow-hidden bg-stone-50">
@@ -165,6 +259,13 @@ export default function ATLmanage() {
               </div>
             </div>
 
+            {backendError && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
+                <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
+                {backendError} ATL Management tidak memakai dummy/localStorage sebagai pengganti data.
+              </div>
+            )}
+
             {/* Tab Navigation */}
             <div className="rounded-2xl border border-stone-200/90 bg-white shadow-[0_8px_16px_rgba(15,23,42,0.04)]">
               <div className="flex border-b border-stone-200/90">
@@ -178,7 +279,7 @@ export default function ATLmanage() {
                 >
                   <span className="flex items-center justify-center gap-2">
                     <span className="material-symbols-outlined text-lg">assignment</span>
-                    Context Setup
+                    Criteria Setting
                   </span>
                 </button>
                 <button
@@ -191,7 +292,7 @@ export default function ATLmanage() {
                 >
                   <span className="flex items-center justify-center gap-2">
                     <span className="material-symbols-outlined text-lg">tune</span>
-                    Importance Weighting
+                    ATL Weighting Setup
                   </span>
                 </button>
               </div>
@@ -201,8 +302,7 @@ export default function ATLmanage() {
                 {activeTab === "criteria" && React.createElement(criteriamanagement)}
                 {activeTab === "settings" && (
                   <ExpertManagement 
-                    onAddCriteriaClick={() => setActiveTab("criteria")} 
-                    onTopicChange={handleSummaryTopicChange}
+                    onAddCriteriaClick={() => setActiveTab("criteria")}
                   />
                 )}
               </div>
@@ -221,10 +321,28 @@ export default function ATLmanage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-black text-stone-700">
-                    <span className="material-symbols-outlined text-[17px] text-primary">summarize</span>
-                    Summary: {prettyTopic(selectedTopic)}
-                  </span>
+                  <label className="group relative inline-flex min-w-[230px] items-center rounded-xl border border-stone-200 bg-white transition-all hover:border-primary/50 hover:bg-primary/5 focus-within:border-primary focus-within:ring-4 focus-within:ring-primary/10">
+                    <span className="pointer-events-none absolute left-3 material-symbols-outlined text-[17px] text-primary">summarize</span>
+                    <select
+                      value={selectedTopic}
+                      onChange={(event) => handleSummaryTopicChange(event.target.value)}
+                      className="w-full cursor-pointer appearance-none rounded-xl bg-transparent py-2 pl-10 pr-9 text-xs font-black text-stone-700 outline-none"
+                      aria-label="Pilih mapel dan subtopik untuk summary"
+                    >
+                      {subjectTopics.map((subject) => (
+                        <optgroup key={subject.id} label={subject.label}>
+                          {(subject.topics || []).map((topic) => (
+                            <option key={topic.id} value={topic.id}>
+                              Summary: {subject.label} - {topic.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    <span className="pointer-events-none absolute right-3 material-symbols-outlined text-[18px] text-stone-500 transition-transform group-focus-within:rotate-180">
+                      expand_more
+                    </span>
+                  </label>
                   <button
                     type="button"
                     onClick={() => setShowWeightDetail((current) => !current)}
@@ -242,7 +360,8 @@ export default function ATLmanage() {
                 <aside className="rounded-2xl border border-primary/25 bg-white p-5">
                   <p className="mb-5 text-[11px] font-black uppercase tracking-[0.2em] text-primary-hover">Konfigurasi</p>
                   {[
-                    ["topic", "Topik", prettyTopic(selectedTopic)],
+                    ["menu_book", "Mata Pelajaran", selectedSummaryMeta.subject?.label || "-"],
+                    ["topic", "Topik", selectedSummaryMeta.topic?.label || prettyTopic(selectedTopic)],
                     ["groups", "Kelas", "3A (Primary)"],
                     ["grid_view", "Jumlah Kriteria", summaryData.rows.length],
                     ["person", "Jumlah ATL", 5],
@@ -261,7 +380,7 @@ export default function ATLmanage() {
 
                 <section>
                   <h3 className="text-xl font-black text-stone-950">Weight Recap</h3>
-                  <p className="mt-1 text-sm font-semibold text-stone-500">Ringkasan cepat hasil pembobotan ATL per kriteria.</p>
+                  <p className="mt-1 text-sm font-semibold text-stone-500">Ringkasan cepat bobot Fuzzy-AHP yang akan dipakai saat menghitung nilai akhir siswa.</p>
 
                   <div className="mt-4 rounded-2xl border border-primary/25 bg-primary/5 p-4">
                     <div className="flex gap-4">
@@ -269,9 +388,9 @@ export default function ATLmanage() {
                         <span className="material-symbols-outlined text-3xl">target</span>
                       </div>
                       <div>
-                        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-primary-hover">Pengertian Dominant Subskill</p>
+                        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-primary-hover">Pengertian Bobot Fuzzy-AHP</p>
                         <p className="mt-1 text-sm leading-6 text-stone-700">
-                          Dominant subskill adalah subskill ATL dengan pengaruh terbesar terhadap suatu kriteria berdasarkan bobot akhir tertinggi.
+                          Bobot menunjukkan seberapa besar pengaruh subskill pada perhitungan akhir. Semakin besar bobot, semakin besar kontribusinya saat skor rubrik siswa digabungkan.
                         </p>
                       </div>
                     </div>
@@ -281,11 +400,9 @@ export default function ATLmanage() {
                     <table className="w-full">
                       <thead className="bg-primary/5">
                         <tr>
-                          <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-stone-500">No</th>
                           <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-stone-500">Kriteria Penilaian</th>
                           <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-stone-500">Dominant Subskill</th>
-                          <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-stone-500">Bobot Akhir</th>
-                          <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-stone-500">Kontribusi</th>
+                          <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-stone-500">Bobot Fuzzy</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-primary/10 bg-white">
@@ -293,34 +410,31 @@ export default function ATLmanage() {
                           const style = getSubskillStyle(row.dominant.subskill, row.dominant.atl);
                           return (
                             <tr key={row.item.kriteria} className="hover:bg-primary/5">
-                              <td className="px-4 py-3 text-sm font-bold text-stone-500">{row.index + 1}</td>
                               <td className="px-4 py-3">
                                 <div className="flex items-center gap-3">
                                   <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                                    <span className="material-symbols-outlined text-[17px]">music_note</span>
+                                    <span className="text-xs font-black">{row.index + 1}</span>
                                   </span>
                                   <span className="text-sm font-black text-stone-900">{row.item.kriteria}</span>
                                 </div>
                               </td>
                               <td className="px-4 py-3">
                                 <span
-                                  className={`inline-flex rounded-lg border px-3 py-1 text-xs font-black ${style.chip}`}
+                                  className={`inline-flex h-10 w-44 items-center justify-center rounded-xl border px-3 text-center text-[11px] font-black leading-tight ${style.chip}`}
                                   style={style.chipStyle}
+                                  title={row.dominant.subskill}
                                 >
-                                  {row.dominant.subskill}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-center">
-                                <span className="inline-flex min-w-[58px] justify-center rounded-lg bg-primary/10 px-3 py-1 text-base font-black text-primary">
-                                  {row.dominant.weight.toFixed(2)}
+                                  <span className="line-clamp-2">{row.dominant.subskill}</span>
                                 </span>
                               </td>
                               <td className="px-4 py-3">
                                 <div className="flex items-center gap-3">
-                                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-100">
+                                  <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-stone-100">
                                     <div className="h-full rounded-full" style={{ width: `${Math.min(row.dominant.weight * 100, 100)}%`, backgroundColor: style.barColor }} />
                                   </div>
-                                  <span className="w-12 text-right text-xs font-black text-stone-500">{(row.dominant.weight * 100).toFixed(1)}%</span>
+                                  <span className="min-w-[54px] rounded-lg bg-primary/10 px-2.5 py-1 text-center text-sm font-black text-primary">
+                                    {row.dominant.weight.toFixed(2)}
+                                  </span>
                                 </div>
                               </td>
                             </tr>
@@ -329,7 +443,7 @@ export default function ATLmanage() {
                       </tbody>
                     </table>
                     <div className="border-t border-primary/20 bg-primary/5 px-4 py-3 text-xs font-semibold text-stone-600">
-                      Dominant subskill ditentukan berdasarkan bobot akhir tertinggi pada setiap kriteria.
+                      Catatan: bagian ini menjelaskan bobot pembobotan, bukan hasil nilai siswa. Nilai siswa tetap dihitung dari rating rubrik yang dimasukkan evaluator.
                     </div>
                   </div>
                 </section>
@@ -405,7 +519,7 @@ export default function ATLmanage() {
                       </div>
 
                       <div className="mt-4 flex min-h-[42px] items-center justify-between gap-3 rounded-xl bg-stone-50 px-3 py-2">
-                        <p className="text-sm font-semibold leading-none text-stone-500">Average Weight</p>
+                        <p className="text-sm font-semibold leading-none text-stone-500">Mean Weight</p>
                         <p className="text-3xl font-black leading-none text-primary">{row.averageWeight.toFixed(2)}</p>
                       </div>
 
@@ -416,7 +530,7 @@ export default function ATLmanage() {
                           backgroundColor: `${dominantStyle.dot}12`,
                         }}
                       >
-                        <div className="flex items-center gap-3">
+                        <div className="grid grid-cols-[48px_minmax(0,1fr)_auto] items-center gap-3">
                           <div
                             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white shadow-lg"
                             style={{ backgroundColor: dominantStyle.dot }}
@@ -425,10 +539,16 @@ export default function ATLmanage() {
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-black" style={{ color: dominantStyle.dot }}>Dominant Skill</p>
-                            <p className="mt-0.5 truncate text-lg font-black leading-tight text-slate-950">{row.dominant.subskill}</p>
+                            <p
+                              className="mt-0.5 line-clamp-2 break-words font-black text-slate-950"
+                              style={getFittedSkillTitleStyle(row.dominant.subskill)}
+                              title={row.dominant.subskill}
+                            >
+                              {row.dominant.subskill}
+                            </p>
                             <p className="mt-0.5 text-xs font-semibold text-stone-500">Strong analytical contribution</p>
                           </div>
-                          <p className="text-3xl font-black" style={{ color: dominantStyle.dot }}>{row.dominant.weight.toFixed(2)}</p>
+                          <p className="shrink-0 text-3xl font-black" style={{ color: dominantStyle.dot }}>{row.dominant.weight.toFixed(2)}</p>
                         </div>
                       </div>
 
@@ -507,6 +627,175 @@ export default function ATLmanage() {
                   );
                   })}
                 </div>
+                {(() => {
+                  const exampleScores = [90, 70, 50, 30];
+                  const exampleRows = summaryData.rows.slice(0, 4).map((row, index) => {
+                    const score = exampleScores[index] ?? 70;
+                    const weight = Number(row.dominant.weight || row.averageWeight || 1);
+                    const scoreLabel = score >= 85 ? "EE" : score >= 70 ? "ME" : score >= 50 ? "DE" : score >= 30 ? "PTE" : "NFI";
+                    return {
+                      criteria: row.item.kriteria,
+                      indicator: row.dominant.subskill,
+                      score,
+                      scoreLabel,
+                      weight,
+                      weightedScore: score * weight,
+                    };
+                  });
+                  const totalWeight = exampleRows.reduce((sum, row) => sum + row.weight, 0) || 1;
+                  const weightedTotal = exampleRows.reduce((sum, row) => sum + row.weightedScore, 0);
+                  const finalScore = weightedTotal / totalWeight;
+                  const finalLabel = finalScore >= 85 ? "EE" : finalScore >= 70 ? "ME" : finalScore >= 50 ? "DE" : finalScore >= 30 ? "PTE" : "NFI";
+                  return (
+                    <div className="mt-5 rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-sm">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                        <div>
+                          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-primary-hover">How weights are used</p>
+                          <h3 className="mt-2 text-2xl font-black text-stone-950">Ringkasan Bobot & Cara Perhitungan</h3>
+                          <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
+                            Ikhtisar rumus, contoh penerapan, dan hasil akhir berdasarkan bobot indikator. Panel ini bersifat edukatif, bukan perhitungan real-time nilai siswa.
+                          </p>
+                        </div>
+                        <div className="hidden items-end gap-3 lg:flex">
+                          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary shadow-sm">
+                            <span className="material-symbols-outlined text-3xl">music_note</span>
+                          </div>
+                          <div className="flex h-20 w-24 items-end justify-center gap-1 rounded-2xl bg-violet-50 p-3">
+                            {[24, 36, 50, 68].map((height, index) => (
+                              <span key={height} className="w-3 rounded-t bg-primary/70" style={{ height: `${height}px`, opacity: 0.55 + index * 0.12 }} />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 grid gap-5 xl:grid-cols-[0.9fr_1.5fr]">
+                        <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                              <span className="material-symbols-outlined text-2xl">menu_book</span>
+                            </span>
+                            <h4 className="text-lg font-black text-stone-950">Rumus & Penjelasan Singkat</h4>
+                          </div>
+                          <div className="mt-4 rounded-2xl bg-primary/5 px-5 py-6 text-center">
+                            <p className="text-xl font-black text-stone-950">
+                              Final Score = <span className="inline-block align-middle">&Sigma;(Score &times; Weight)</span> / <span className="inline-block align-middle">&Sigma;(Weight)</span>
+                            </p>
+                          </div>
+                          {[
+                            ["speed", "Score", "Nilai mentah dari rating rubrik pada setiap indikator.", "bg-blue-50 text-blue-700"],
+                            ["balance", "Weight", "Bobot Fuzzy-AHP yang ditetapkan untuk setiap indikator.", "bg-emerald-50 text-emerald-700"],
+                            ["flag", "Hasil Akhir", "Skor akhir adalah rata-rata tertimbang dari seluruh indikator.", "bg-amber-50 text-amber-700"],
+                          ].map(([icon, title, text, tone]) => (
+                            <div key={title} className={`mt-3 flex items-start gap-3 rounded-2xl p-3 ${tone}`}>
+                              <span className="material-symbols-outlined text-2xl">{icon}</span>
+                              <div>
+                                <p className="text-sm font-black">{title}</p>
+                                <p className="mt-1 text-xs font-semibold leading-5 text-stone-600">{text}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-50 text-rose-600">
+                              <span className="material-symbols-outlined text-2xl">calculate</span>
+                            </span>
+                            <h4 className="text-lg font-black text-stone-950">Contoh Perhitungan</h4>
+                          </div>
+                          <div className="mt-4 overflow-hidden rounded-2xl border border-stone-200">
+                            <table className="w-full">
+                              <thead className="bg-stone-50">
+                                <tr>
+                                  <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500">Area</th>
+                                  <th className="px-4 py-3 text-left text-[10px] font-black uppercase tracking-widest text-slate-500">Indikator</th>
+                                  <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500">Predikat</th>
+                                  <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500">Score</th>
+                                  <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500">Weight</th>
+                                  <th className="px-4 py-3 text-center text-[10px] font-black uppercase tracking-widest text-slate-500">Score x Weight</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-stone-100">
+                                {exampleRows.length > 0 ? exampleRows.map((row) => (
+                                  <tr key={row.criteria}>
+                                    <td className="px-4 py-3 text-xs font-bold leading-5 text-stone-700">{row.criteria}</td>
+                                    <td className="px-4 py-3 text-xs font-bold leading-5 text-stone-700">{row.indicator}</td>
+                                    <td className="px-4 py-3 text-center">
+                                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${getRatingChipClass(row.scoreLabel)}`}>
+                                        {row.scoreLabel}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-center text-sm font-bold text-stone-700">{row.score}</td>
+                                    <td className="px-4 py-3 text-center text-sm font-bold text-stone-700">{row.weight.toFixed(2)}</td>
+                                    <td className="px-4 py-3 text-center text-sm font-black text-stone-950">{row.weightedScore.toFixed(2)}</td>
+                                  </tr>
+                                )) : (
+                                  <tr>
+                                    <td colSpan={6} className="px-4 py-8 text-center text-sm font-bold text-slate-500">
+                                      Belum ada package bobot untuk dibuat contoh.
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+                        <div className="grid gap-4 lg:grid-cols-[136px_minmax(0,1fr)] lg:items-stretch">
+                          <div className="flex items-center justify-center gap-3 rounded-2xl bg-stone-50 p-3 lg:flex-col">
+                            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100">
+                              <span className="material-symbols-outlined text-3xl">fact_check</span>
+                            </span>
+                            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/20">
+                              <span className="material-symbols-outlined text-3xl">balance</span>
+                            </span>
+                          </div>
+
+                          <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">
+                            <div className="flex flex-wrap items-center justify-center gap-3 lg:justify-end">
+                              <div className="min-w-[150px] rounded-2xl bg-white px-4 py-3 text-center ring-1 ring-stone-200">
+                                <p className="text-[11px] font-bold text-stone-500">Weighted Total</p>
+                                <p className="mt-1 text-3xl font-black text-emerald-700">{weightedTotal.toFixed(2)}</p>
+                                <p className="mt-1 text-[11px] font-semibold text-stone-500">&Sigma; (Score x Weight)</p>
+                              </div>
+                              <span className="text-4xl font-black text-stone-300">/</span>
+                              <div className="min-w-[150px] rounded-2xl bg-white px-4 py-3 text-center ring-1 ring-stone-200">
+                                <p className="text-[11px] font-bold text-stone-500">Total Weight</p>
+                                <p className="mt-1 text-3xl font-black text-emerald-700">{totalWeight.toFixed(2)}</p>
+                                <p className="mt-1 text-[11px] font-semibold text-stone-500">&Sigma; (Weight)</p>
+                              </div>
+                              <span className="text-4xl font-black text-stone-300">=</span>
+                              <div className="min-w-[220px] rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-center">
+                                <p className="text-[12px] font-black text-emerald-900">Final Score</p>
+                                <p className="mt-1 text-5xl font-black leading-none text-emerald-700">
+                                  {Number.isFinite(finalScore) ? finalScore.toFixed(2) : "0.00"}
+                                </p>
+                                <p className="mt-2 text-sm font-semibold text-stone-500">(Skor Akhir)</p>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-primary/15 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                              <div>
+                                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-stone-500">Predicate</p>
+                                <p className="mt-1 text-sm font-semibold leading-5 text-stone-500">
+                                  Contoh cara membaca bobot, bukan nilai siswa tersimpan.
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className={`inline-flex h-12 min-w-12 items-center justify-center rounded-full px-3 text-lg font-black ring-1 ${getRatingChipClass(finalLabel)}`}>
+                                  {finalLabel}
+                                </span>
+                                <p className="text-right text-sm font-black text-stone-900">{getRatingFullLabel(finalLabel)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="mt-5 rounded-2xl border border-primary/25 bg-white p-4">
                   <p className="text-[11px] font-black uppercase tracking-[0.18em] text-primary-hover">
                     Proses Fuzzy-AHP yang Dipakai

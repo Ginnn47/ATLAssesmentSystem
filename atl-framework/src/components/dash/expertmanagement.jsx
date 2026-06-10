@@ -1,81 +1,25 @@
-import React, { useState, useMemo, useEffect } from "react";
-import { dummyATL, saveATLData } from "../dummyData/dummyATL";
-import { calculateContextWeights, getCriteria, getWeights, saveWeights } from "../../services/atlApi";
+import React, { useState, useEffect } from "react";
+import {
+  calculateContextWeights,
+  getContextFlow,
+  getTopics,
+  resetContextPairwiseScale,
+  saveContextWeights,
+  updateContextPairwiseScale,
+} from "../../services/atlApi";
 import { getSubskillColorHex, getSubskillMeta } from "../../services/labelRegistry";
 import { getSubjectData } from "../../services/topicCatalog";
 
- const scaleOptions = [
-  { label: "Sama penting", value: 1, tfn: [1, 1, 1] },
-  { label: "Sedikit lebih penting", value: 3, tfn: [2, 3, 4] },
-  { label: "Lebih penting", value: 5, tfn: [4, 5, 6] },
-  { label: "Sangat lebih penting", value: 7, tfn: [6, 7, 8] },
-  { label: "Mutlak lebih penting", value: 9, tfn: [8, 9, 9] },
- ];
- 
- // TFN Helper Functions
-const round = (n) => Math.round(n * 100) / 100;
-
-const addTFN = (a, b) => [
-  round(a[0] + b[0]), 
-  round(a[1] + b[1]), 
-  round(a[2] + b[2])
+const fallbackScaleOptions = [
+  { code: "equal", label: "Sama penting", ahpValue: 1, tfn: [1, 1, 1], reciprocal: [1, 1, 1] },
+  { code: "slight", label: "Sedikit lebih penting", ahpValue: 3, tfn: [2, 3, 4], reciprocal: [0.25, 0.33, 0.5] },
+  { code: "important", label: "Lebih penting", ahpValue: 5, tfn: [4, 5, 6], reciprocal: [0.17, 0.2, 0.25] },
+  { code: "very_important", label: "Sangat lebih penting", ahpValue: 7, tfn: [6, 7, 8], reciprocal: [0.13, 0.14, 0.17] },
+  { code: "absolute", label: "Mutlak lebih penting", ahpValue: 9, tfn: [8, 9, 9], reciprocal: [0.11, 0.11, 0.13] },
 ];
 
-const inverseTFN = (a) => [
-  round(1 / a[2]), 
-  round(1 / a[1]), 
-  round(1 / a[0])
-];
-
-const divideTFN = (a, b) => [
-  round(a[0] / b[2]),
-  round(a[1] / b[1]),
-  round(a[2] / b[0]),
-];
-
-// Degree of Possibility
-const degreePossibility = (M1, M2) => {
-  const [l1, m1, u1] = M1;
-  const [l2, m2, u2] = M2;
-
-  // Case 1: pasti lebih besar
-  if (m1 >= m2) return 1;
-
-  // Case 2: pasti lebih kecil
-  if (l2 >= u1) return 0;
-
-  // Case 3: overlap → hitung rasio
-  const numerator = l2 - u1;
-  const denominator = (m1 - u1) - (m2 - l2);
-
-  if (denominator === 0) return 0;
-
-  const val = numerator / denominator;
-
-  return Math.max(0, Math.min(1, round(val)));
-};
-
-// Helper to convert decimal to fraction string for display (specifically for TFN Matrix)
-const toFraction = (val) => {
-  if (val === 1) return "1";
-  if (val < 1) {
-    const denom = Math.round(1 / val);
-    return `1/${denom}`;
-  }
-  return Math.round(val).toString();
-};
-
-const WEIGHT_PRECISION = 6;
 const SAVED_WEIGHT_META_KEYS = ["__mode", "packages", "__savedAt", "__activity"];
 const formatWeightDisplay = (weight) => Number(weight || 0).toFixed(2);
-const weightPercent = (weight) => `${Math.round(Number(weight || 0) * 100)}%`;
-const describeWeight = (weight) => {
-  const value = Number(weight || 0);
-  if (value >= 0.6) return "Strong analytical contribution";
-  if (value >= 0.35) return "Major contextual contribution";
-  if (value >= 0.15) return "Supporting contribution";
-  return "Minor evidence contribution";
-};
 const ResultHoverCard = ({ item, mode }) => {
   if (!item) {
     return (
@@ -127,22 +71,6 @@ const ResultHoverCard = ({ item, mode }) => {
     </div>
   );
 };
-const riTable = { 1: 0, 2: 0, 3: 0.58, 4: 0.9, 5: 1.12, 6: 1.24, 7: 1.32, 8: 1.41, 9: 1.45, 10: 1.49 };
-const calculateConsistencyRatio = (matrix) => {
-  const n = matrix.length;
-  if (n <= 2) return 0;
-  const crisp = matrix.map((row) => row.map((cell) => cell[1]));
-  const geometricMeans = crisp.map((row) => row.reduce((acc, value) => acc * Math.max(value, 0.000001), 1) ** (1 / n));
-  const gmTotal = geometricMeans.reduce((acc, value) => acc + value, 0);
-  const weights = gmTotal > 0 ? geometricMeans.map((value) => value / gmTotal) : Array(n).fill(1 / n);
-  const weightedSums = crisp.map((row) => row.reduce((acc, value, index) => acc + value * weights[index], 0));
-  const lambdaValues = weightedSums.map((value, index) => value / weights[index]).filter(Number.isFinite);
-  const lambdaMax = lambdaValues.reduce((acc, value) => acc + value, 0) / lambdaValues.length;
-  const ci = Math.max(0, (lambdaMax - n) / (n - 1));
-  const ri = riTable[n] || 1.49;
-  return ri === 0 ? 0 : Math.round((ci / ri) * 1000000) / 1000000;
-};
-
 const formatSavedActivityTime = (value) => {
   if (!value) return "-";
   const date = new Date(value);
@@ -155,175 +83,178 @@ const formatSavedActivityTime = (value) => {
   }).format(date);
 };
 
-// NOTE: calculateResult must live inside ExpertManagement so it can access component state.
 
 const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
-  const [subjectData, setSubjectData] = useState(getSubjectData);
+  const initialSubjects = getSubjectData();
+  const [subjectData, setSubjectData] = useState(initialSubjects);
   const [step, setStep] = useState(1);
-  const [selectedSubjectId, setSelectedSubjectId] = useState(getSubjectData()[0].id);
-  const [selectedTopicId, setSelectedTopicId] = useState(getSubjectData()[0].topics[0].id);
+  const [selectedSubjectId, setSelectedSubjectId] = useState(initialSubjects[0]?.id || "");
+  const [selectedTopicId, setSelectedTopicId] = useState(initialSubjects[0]?.topics?.[0]?.id || "");
 
   const [pairwise, setPairwise] = useState({});
   const [result, setResult] = useState(null);
-  const [dataVersion, setDataVersion] = useState(0);
+  const [contextFlow, setContextFlow] = useState(null);
+  const [savedTopicWeights, setSavedTopicWeights] = useState({});
   const [resultVisualIndex, setResultVisualIndex] = useState(0);
   const [fuzzyPackageIndex, setFuzzyPackageIndex] = useState(0);
   const [resultHover, setResultHover] = useState(null);
+  const [calculatingWeights, setCalculatingWeights] = useState(false);
+  const [savingWeights, setSavingWeights] = useState(false);
+  const [scaleOptions, setScaleOptions] = useState(fallbackScaleOptions);
+  const [scaleDraft, setScaleDraft] = useState(fallbackScaleOptions);
+  const [scaleSaving, setScaleSaving] = useState(false);
+  const [scaleStatus, setScaleStatus] = useState("");
+  const [backendError, setBackendError] = useState("");
 
   useEffect(() => {
-    const packageCount = Object.keys(result?.packages || {}).length;
-    setFuzzyPackageIndex((index) => Math.min(Math.max(index, 0), Math.max(packageCount - 1, 0)));
-  }, [result]);
+    getTopics()
+      .then((subjects) => {
+        setSubjectData(subjects || []);
+        const firstSubject = subjects?.[0];
+        setSelectedSubjectId((current) => current || firstSubject?.id || "");
+        setSelectedTopicId((current) => current || firstSubject?.topics?.[0]?.id || "");
+        setBackendError("");
+      })
+      .catch((error) => {
+        setSubjectData([]);
+        setBackendError(error.message || "Gagal mengambil topik dari backend.");
+      });
+  }, []);
 
-  useEffect(() => {
-    setResultHover(null);
-  }, [resultVisualIndex, result]);
+  const buildPackagePayload = () => Object.fromEntries(
+    rubricPackages.map((pkg) => [
+      pkg.key,
+      {
+        key: pkg.key,
+        rubricItemId: pkg.rubricItemId,
+        title: pkg.title,
+        criteriaTopic: pkg.criteriaTopic,
+        categories: pkg.categories,
+        subskills: pkg.subskills,
+        pairwise: Object.values(pairwise[pkg.key] || {}),
+      },
+    ])
+  );
 
-  const buildLocalResultFor = (criteriaList, pairwiseMap = {}) => {
-    const n = criteriaList.length;
-    if (n === 0) return null;
-
-    // 1. Build matrix TFN nxn
-    let matrix = Array(n).fill(0).map(() =>
-      Array(n).fill([1, 1, 1])
-    );
-
-    // isi dari pairwise
-    Object.values(pairwiseMap).forEach((val) => {
-      const i = criteriaList.indexOf(val.left);
-      const j = criteriaList.indexOf(val.right);
-
-      const scaleObj = scaleOptions.find(s => s.label === val.scale);
-      const tfn = scaleObj ? scaleObj.tfn : [1, 1, 1];
-
-      if (i >= 0 && j >= 0) {
-        matrix[i][j] = tfn;
-        matrix[j][i] = inverseTFN(tfn);
-      }
+  const normalizeScaleOptions = (options) => (Array.isArray(options) && options.length > 0 ? options : fallbackScaleOptions)
+    .map((option, index) => {
+      const tfn = option.tfn || [option.fuzzyLower, option.fuzzyMiddle, option.fuzzyUpper];
+      const normalizedTfn = tfn.map((value) => Number(value || 0));
+      return {
+        ...option,
+        code: option.code || `scale-${index}`,
+        ahpValue: option.ahpValue || option.value || index + 1,
+        tfn: normalizedTfn,
+        reciprocal: option.reciprocal || [
+          normalizedTfn[2] ? 1 / normalizedTfn[2] : 0,
+          normalizedTfn[1] ? 1 / normalizedTfn[1] : 0,
+          normalizedTfn[0] ? 1 / normalizedTfn[0] : 0,
+        ],
+      };
     });
 
-    // 2. Sum per baris
-    let rowSums = matrix.map(row =>
-      row.reduce((acc, val) => addTFN(acc, val), [0,0,0])
-    );
+  const scaleDirty = JSON.stringify(scaleOptions.map((item) => item.tfn)) !== JSON.stringify(scaleDraft.map((item) => item.tfn));
+  const scaleInvalid = scaleDraft.some((item) => {
+    const [lower, middle, upper] = item.tfn || [];
+    return !Number.isFinite(lower) || !Number.isFinite(middle) || !Number.isFinite(upper) || lower <= 0 || middle <= 0 || upper <= 0 || lower > middle || middle > upper;
+  });
+  const formatScaleNumber = (value) => {
+    const number = Number(value || 0);
+    return Number.isInteger(number) ? String(number) : number.toFixed(2);
+  };
 
-    // 3. Total semua
-    let total = rowSums.reduce((acc, val) => addTFN(acc, val), [0,0,0]);
+  const updateScaleDraftValue = (code, index, value) => {
+    const nextValue = Number(value);
+    setScaleDraft((current) => current.map((item) => {
+      if (item.code !== code) return item;
+      const nextTfn = [...(item.tfn || [1, 1, 1])];
+      nextTfn[index] = Number.isNaN(nextValue) ? 0 : nextValue;
+      return {
+        ...item,
+        tfn: nextTfn,
+        reciprocal: [
+          nextTfn[2] ? 1 / nextTfn[2] : 0,
+          nextTfn[1] ? 1 / nextTfn[1] : 0,
+          nextTfn[0] ? 1 / nextTfn[0] : 0,
+        ],
+      };
+    }));
+    setScaleStatus("Scale berubah. Simpan scale lalu hitung ulang bobot.");
+    setResult(null);
+  };
 
-    // 4. Synthetic extent
-    let S = rowSums.map(r => divideTFN(r, total));
-
-    // 5. Degree of possibility matrix
-    let V = Array(n).fill(0).map(() => Array(n).fill(0));
-
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        if (i !== j) {
-          V[i][j] = degreePossibility(S[i], S[j]);
-        } else {
-          V[i][j] = 1;
-        }
-      }
+  const handleSaveScaleOptions = async () => {
+    if (!selectedTopicId || scaleInvalid || !scaleDirty) return;
+    setScaleSaving(true);
+    setBackendError("");
+    try {
+      const saved = normalizeScaleOptions(await updateContextPairwiseScale(
+        selectedTopicId,
+        scaleDraft.map((item) => ({
+          code: item.code,
+          fuzzyLower: item.tfn[0],
+          fuzzyMiddle: item.tfn[1],
+          fuzzyUpper: item.tfn[2],
+        }))
+      ));
+      setScaleOptions(saved);
+      setScaleDraft(saved);
+      setScaleStatus("Scale tersimpan. Silakan hitung ulang bobot.");
+      setResult(null);
+    } catch (error) {
+      setBackendError(error.message || "Gagal menyimpan scale pairwise.");
+    } finally {
+      setScaleSaving(false);
     }
+  };
 
-    // 6. d vector (min tiap baris)
-    let d = V.map(row => Math.min(...row));
-
-    // 7. normalisasi (W)
-    const sumD = d.reduce((a, b) => a + b, 0);
-    let weights = {};
-
-    // Normalisasi awal dari d-vector
-    let normalizedWeights = [];
-    if (sumD === 0) {
-      normalizedWeights = Array(n).fill(1 / n);
-    } else {
-      normalizedWeights = d.map((val) => val / sumD);
+  const handleResetScaleOptions = async () => {
+    if (!selectedTopicId) return;
+    setScaleSaving(true);
+    setBackendError("");
+    try {
+      const reset = normalizeScaleOptions(await resetContextPairwiseScale(selectedTopicId));
+      setScaleOptions(reset);
+      setScaleDraft(reset);
+      setScaleStatus("Scale kembali ke default. Silakan hitung ulang bobot.");
+      setResult(null);
+    } catch (error) {
+      setBackendError(error.message || "Gagal reset scale pairwise.");
+    } finally {
+      setScaleSaving(false);
     }
-
-    const finalWeights = normalizedWeights;
-
-    criteriaList.forEach((c, i) => {
-      weights[c] = finalWeights[i].toFixed(WEIGHT_PRECISION);
-    });
-
-    return {
-      weights,
-      sumD: sumD.toFixed(2),
-      consistency: calculateConsistencyRatio(matrix),
-      debug: { matrix, rowSums, total, S, V, d: d.map(val => val.toFixed(2)) }
-    };
   };
 
   const calculateResult = async () => {
-    const packageResults = {};
-    const flatWeights = {};
-    rubricPackages.forEach((pkg) => {
-      const localResult = buildLocalResultFor(pkg.subskills, pairwise[pkg.key] || {});
-      if (!localResult) return;
-      const pairwiseTrace = Object.values(pairwise[pkg.key] || {}).map((trace) => {
-        const scaleObj = scaleOptions.find((scale) => scale.label === trace.scale);
-        return {
-          left: trace.left,
-          right: trace.right,
-          scale: trace.scale,
-          tfn: scaleObj?.tfn || [1, 1, 1],
-        };
-      });
-      packageResults[pkg.key] = {
-        ...localResult,
-        title: pkg.title,
-        criteriaTopic: pkg.criteriaTopic,
-        subskills: pkg.subskills,
-        pairwiseTrace,
-      };
-      Object.entries(localResult.weights || {}).forEach(([subskill, weight]) => {
-        flatWeights[`${pkg.title} (${subskill})`] = weight;
-      });
-    });
-
-    const consistencyValues = Object.values(packageResults).map((item) => Number(item.consistency || 0));
-    const firstPackage = Object.values(packageResults)[0];
-    const localResult = {
-      weights: flatWeights,
-      packages: packageResults,
-      consistency: consistencyValues.length ? Math.max(...consistencyValues) : 0,
-      sumD: firstPackage?.sumD || "0.00",
-      debug: firstPackage?.debug || { packages: packageResults },
-    };
-
-    if (Object.keys(packageResults).length === 0) return;
-
-    setResult(localResult);
+    if (!selectedTopicId || rubricPackages.length === 0 || scaleDirty || scaleInvalid) return;
+    setCalculatingWeights(true);
+    setBackendError("");
     try {
-      const apiResult = await calculateContextWeights(selectedTopicId, {
-        __criterionPackages: true,
-        packages: packageResults,
-        weights: flatWeights,
-      });
-      if (apiResult?.weights && Object.keys(apiResult.weights).length > 0) {
-        const mergedPackages = Object.entries(apiResult.packages || packageResults).reduce((acc, [key, pkg]) => {
-          acc[key] = {
-            ...(packageResults[key] || {}),
-            ...pkg,
-            pairwiseTrace: packageResults[key]?.pairwiseTrace || pkg.pairwiseTrace || [],
-          };
-          return acc;
-        }, {});
-        setResult({ ...localResult, ...apiResult, packages: mergedPackages });
-      }
+      const apiResult = await calculateContextWeights(
+        selectedTopicId,
+        {
+          __criterionPackages: true,
+          packages: buildPackagePayload(),
+        },
+        { persist: false }
+      );
+      setResult(apiResult);
+      setResultHover(null);
+      setStep(3);
     } catch (error) {
-      setResult(localResult);
+      setBackendError(error.message || "Backend gagal menghitung bobot Fuzzy-AHP.");
+    } finally {
+      setCalculatingWeights(false);
     }
   };
 
   const handleSaveToSystem = async () => {
     if (!result || !result.weights) return;
-    
-    if (!dummyATL.savedWeights) dummyATL.savedWeights = {};
+
     const selectedSubject = subjectData.find((subject) => subject.id === selectedSubjectId);
     const selectedTopic = selectedSubject?.topics.find((topic) => topic.id === selectedTopicId);
     const savedAt = new Date().toISOString();
+    const weightEntries = Object.entries(result.weights || {}).filter(([key]) => !SAVED_WEIGHT_META_KEYS.includes(key));
     const savedActivity = {
       topicId: selectedTopicId,
       topicLabel: selectedTopic?.label || selectedTopicId,
@@ -331,72 +262,54 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
       subjectLabel: selectedSubject?.label || selectedSubjectId,
       savedAt,
       packageCount: Object.keys(result.packages || {}).length,
-      weightedLinkCount: Object.keys(result.weights || {}).length,
+      weightedLinkCount: weightEntries.length,
       maxConsistency: Number(result.consistency || 0),
     };
-    dummyATL.savedWeights[selectedTopicId] = {
-      ...(result.weights || {}),
-      __mode: "criterion-packages",
-      packages: result.packages || {},
-      __savedAt: savedAt,
-      __activity: savedActivity,
-    };
-    dummyATL.savedWeightActivities = [
-      savedActivity,
-      ...(dummyATL.savedWeightActivities || []).filter((activity) => activity.topicId !== selectedTopicId),
-    ].slice(0, 6);
-    
-    saveATLData(dummyATL);
-    await saveWeights(selectedTopicId, dummyATL.savedWeights[selectedTopicId], result.debug || {});
-    alert(`Bobot untuk topik ${selectedTopicId} berhasil disimpan secara permanen!`);
+
+    setSavingWeights(true);
+    try {
+      const apiResult = await saveContextWeights(selectedTopicId, {
+        packages: buildPackagePayload(),
+        savedAt,
+        activity: savedActivity,
+      });
+      setResult(apiResult);
+      setResultHover(null);
+      setSavedTopicWeights(apiResult.weights || {});
+      setContextFlow((current) => current ? { ...current, hasSavedWeight: true, weightSource: "saved" } : current);
+      alert(`Bobot untuk topik ${selectedTopicId} berhasil disimpan ke backend.`);
+    } catch (error) {
+      alert(error.message || "Gagal menyimpan bobot ke backend. Pastikan seluruh pairwise sudah terisi.");
+    } finally {
+      setSavingWeights(false);
+    }
   };
 
-  const rubricPackages = useMemo(() => {
-    const rawData = dummyATL[selectedTopicId] || [];
-    return rawData
-      .filter((item) => Array.isArray(item.atl) && item.atl.length > 0)
-      .map((item, index) => ({
-        key: item.id ? `rubric-${item.id}` : `${item.kriteria}-${index}`,
-        title: item.kriteria,
-        criteriaTopic: item.criteriaTopic || "Rubric Evidence",
-        categories: item.atlCategories || (item.category ? item.category.split(",").map((name) => name.trim()).filter(Boolean) : []),
-        subskills: Array.from(new Set(item.atl || [])),
-      }));
-  }, [selectedTopicId, dataVersion]);
+  const rubricPackages = backendError
+    ? []
+    : Object.values(contextFlow?.weightingPackages || {}).map((item) => ({
+      key: item.key || `rubric-${item.rubricItemId}`,
+      rubricItemId: item.rubricItemId,
+      title: item.title,
+      criteriaTopic: item.criteriaTopic || "Rubric Evidence",
+      categories: item.categories || [],
+      subskills: Array.from(new Set(item.subskills || [])),
+      pairs: item.pairs || [],
+    }));
 
-  const packagePairs = useMemo(() => (
-    rubricPackages.reduce((acc, pkg) => {
-      const pairs = [];
-      for (let i = 0; i < pkg.subskills.length; i++) {
-        for (let j = i + 1; j < pkg.subskills.length; j++) {
-          pairs.push([pkg.subskills[i], pkg.subskills[j]]);
-        }
-      }
-      acc[pkg.key] = pairs;
+  const packagePairs = rubricPackages.reduce((acc, pkg) => {
+      acc[pkg.key] = (pkg.pairs || []).map((pair) => [pair.left, pair.right]);
       return acc;
-    }, {})
-  ), [rubricPackages]);
+    }, {});
 
-  const totalPairCount = useMemo(
-    () => Object.values(packagePairs).reduce((acc, pairs) => acc + pairs.length, 0),
-    [packagePairs]
+  const totalPairCount = Object.values(packagePairs).reduce((acc, pairs) => acc + pairs.length, 0);
+  const filledPairCount = Object.values(pairwise).reduce(
+    (acc, packagePairwise) => acc + Object.keys(packagePairwise || {}).length,
+    0
   );
-  const filledPairCount = useMemo(
-    () => Object.values(pairwise).reduce((acc, packagePairwise) => acc + Object.keys(packagePairwise || {}).length, 0),
-    [pairwise]
-  );
-  const activeCriteriaForDebug = useMemo(
-    () => rubricPackages.flatMap((pkg) => pkg.subskills),
-    [rubricPackages]
-  );
-  const displayPackage = result?.packages ? Object.values(result.packages)[0] : null;
-  const criteria = displayPackage?.subskills || activeCriteriaForDebug;
-  const savedTopicWeights = dummyATL.savedWeights?.[selectedTopicId] || {};
   const savedPackages = savedTopicWeights.packages || {};
-  const recentSavedActivities = dummyATL.savedWeightActivities || [];
-  const hasSavedWeight =
-    Object.keys(savedPackages).length > 0 ||
-    Object.keys(savedTopicWeights).some((key) => !SAVED_WEIGHT_META_KEYS.includes(key));
+  const recentSavedActivities = savedTopicWeights.__activity ? [savedTopicWeights.__activity] : [];
+  const hasSavedWeight = Boolean(contextFlow?.hasSavedWeight);
 
   const buildSavedWeightResult = () => {
     if (!hasSavedWeight) return null;
@@ -441,17 +354,43 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
     }
   };
 
-  // Reset pairwise jika subskill berubah
-  useEffect(() => {
-    setPairwise({});
-    setResult(null);
-  }, [rubricPackages]);
-
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getCriteria(selectedTopicId), getWeights(selectedTopicId)]).then(() => {
-      if (!cancelled) setDataVersion((version) => version + 1);
-    });
+    if (!selectedTopicId) return () => { cancelled = true; };
+    getContextFlow(selectedTopicId)
+      .then((flow) => {
+        if (!cancelled) {
+          const nextPairwise = {};
+          Object.values(flow?.weightingPackages || {}).forEach((pkg) => {
+            nextPairwise[pkg.key || `rubric-${pkg.rubricItemId}`] = Object.fromEntries(
+              (pkg.pairwise || []).map((item, index) => [index, item])
+            );
+          });
+          setResult(null);
+          setResultHover(null);
+          setContextFlow(flow);
+          setSavedTopicWeights(flow?.weights || {});
+          setPairwise(nextPairwise);
+          const nextScaleOptions = normalizeScaleOptions(flow?.scaleOptions);
+          setScaleOptions(nextScaleOptions);
+          setScaleDraft(nextScaleOptions);
+          setScaleStatus("");
+          setBackendError("");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setResult(null);
+          setResultHover(null);
+          setBackendError(error.message || "Gagal mengambil rubrik/bobot dari backend.");
+          setContextFlow(null);
+          setSavedTopicWeights({});
+          setPairwise({});
+          setScaleOptions(fallbackScaleOptions);
+          setScaleDraft(fallbackScaleOptions);
+          setScaleStatus("");
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -462,13 +401,6 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
     window.addEventListener("atl-topics-updated", syncTopics);
     return () => window.removeEventListener("atl-topics-updated", syncTopics);
   }, []);
-
-  // Kalkulasi Real-time
-  useEffect(() => {
-    if (Object.keys(pairwise).length > 0) {
-      calculateResult();
-    }
-  }, [pairwise]);
 
   // Notify parent about topic change for tracking
   useEffect(() => {
@@ -520,20 +452,17 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
       color: getSubskillColorHex(row.subskill, index),
     };
   });
-  let donutCursor = 0;
-  const donutSegments = resultDistribution.map((row, index) => {
+  const donutSegments = resultDistribution.reduce((segments, row, index) => {
     const share = resultDistributionTotal > 0 ? row.total / resultDistributionTotal : 0;
-    const segment = {
+    const start = segments.at(-1)?.end || 0;
+    segments.push({
       ...row,
       color: getSubskillColorHex(row.subskill, index),
-      dash: `${share * 100} ${100 - share * 100}`,
-      offset: 25 - donutCursor * 100,
-      start: donutCursor,
-      end: donutCursor + share,
-    };
-    donutCursor += share;
-    return segment;
-  });
+      start,
+      end: start + share,
+    });
+    return segments;
+  }, []);
   const pieGradient = donutSegments.length
     ? `conic-gradient(${donutSegments.map((segment) => `${segment.color} ${segment.start * 100}% ${segment.end * 100}%`).join(", ")})`
     : "conic-gradient(#E7E5E4 0% 100%)";
@@ -703,6 +632,12 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
       {/* MAIN CONTENT AREA */}
       <div className="flex flex-1 flex-col justify-between overflow-hidden py-2">
         <div className="flex-1 overflow-y-auto pr-4">
+          {backendError && (
+            <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
+              <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
+              {backendError} Importance Weighting tidak memakai dummy/localStorage sebagai pengganti data.
+            </div>
+          )}
           {/* STEP 1: CONTEXT + CRITERIA */}
           {step === 1 && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -724,7 +659,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     value={selectedSubjectId}
                     onChange={(e) => {
                       setSelectedSubjectId(e.target.value);
-                      setSelectedTopicId(subjectData.find(s => s.id === e.target.value).topics[0].id);
+                      setSelectedTopicId(subjectData.find(s => s.id === e.target.value)?.topics?.[0]?.id || "");
                     }}
                   >
                     {subjectData.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
@@ -738,7 +673,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     value={selectedTopicId}
                     onChange={(e) => setSelectedTopicId(e.target.value)}
                   >
-                    {subjectData.find(s => s.id === selectedSubjectId)?.topics.map(t => (
+                    {(subjectData.find(s => s.id === selectedSubjectId)?.topics || []).map(t => (
                       <option key={t.id} value={t.id}>{t.label}</option>
                     ))}
                   </select>
@@ -808,48 +743,6 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
             </div>
           )}
 
-          {/* STEP 2: SUBSKILL */}
-          {false && step === 2 && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <h2 className="mb-2 text-xl font-black text-stone-900">Paket Pairwise per Criterion dalam Topik "{subjectData.find(s => s.id === selectedSubjectId)?.topics.find(t => t.id === selectedTopicId)?.label}"</h2>
-              <p className="mb-6 text-sm font-semibold text-stone-500">
-                Setiap rubric criterion menjadi evidence package sendiri. Pairwise hanya membandingkan ATL subskill yang relevan di dalam criterion tersebut.
-              </p>
-              <div className="grid gap-4 md:grid-cols-3">
-                {rubricPackages.map((pkg) => (
-                  <div key={pkg.key} className="group relative overflow-hidden rounded-2xl border-2 border-stone-100 bg-white p-6 shadow-sm transition-all hover:border-primary/50 hover:shadow-md">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-black text-stone-800">{pkg.title}</span>
-                      <div className="h-6 w-6 rounded-full bg-emerald-500 flex items-center justify-center text-white">
-                        <span className="material-symbols-outlined text-sm font-bold">check</span>
-                      </div>
-                    </div>
-                    <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-stone-400">{pkg.criteriaTopic}</p>
-                    <p className="mt-4 text-[10px] font-bold uppercase tracking-widest text-stone-400">ATL Subskill dalam Paket</p>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {pkg.subskills.map((atlSkill, idx) => {
-                        const tone = getSubskillMeta(atlSkill, idx);
-                        return (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center rounded-full border px-2 py-1 text-[9px] font-bold"
-                            style={tone.chipStyle}
-                          >
-                            {atlSkill}
-                          </span>
-                        );
-                      }) || []}
-                    </div>
-                  </div>
-                ))}
-                <button onClick={onAddCriteriaClick} className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-stone-200 p-6 text-stone-400 transition-all hover:border-primary hover:text-primary">
-                  <span className="material-symbols-outlined text-2xl">add_circle</span>
-                  <span className="mt-2 text-xs font-bold uppercase">Tambah Kriteria</span>
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* STEP 2: PAIRWISE (CORE UI) */}
           {step === 2 && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-12">
@@ -859,12 +752,105 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                   <p className="text-xs text-stone-500 mt-2 font-bold">Setiap blok di bawah adalah 1 paket pairwise untuk 1 rubric criterion.</p>
                 </div>
                 <span className="p-4 bg-primary/5 rounded-2xl border border-primary/20">
-                  <p className="text-[10px] font-black uppercase text-primary tracking-widest mb-1 text-right">Real-time Status</p>
+                  <p className="text-[10px] font-black uppercase text-primary tracking-widest mb-1 text-right">Draft Pairwise</p>
                   <p className="text-sm font-black text-stone-900">
                     {filledPairCount} / {totalPairCount} Perbandingan Terisi
                   </p>
                 </span>
               </div>
+
+              <section className="rounded-[2rem] border-2 border-primary/20 bg-gradient-to-br from-amber-50 via-white to-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="max-w-2xl">
+                    <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-primary-hover">
+                      <span className="material-symbols-outlined text-[14px]">tune</span>
+                      Pairwise Scale Settings
+                    </span>
+                    <h3 className="mt-3 text-lg font-black text-stone-950">Atur TFN untuk scale pairwise subtopik ini</h3>
+                    <p className="mt-2 text-xs font-semibold leading-5 text-stone-600">
+                      Scale ini hanya berlaku untuk perbandingan antar subskill. Diagonal AHP tetap 1, dan pairwise yang belum dipilih tetap netral.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleResetScaleOptions}
+                      disabled={scaleSaving}
+                      className="rounded-2xl border border-stone-200 bg-white px-4 py-2 text-xs font-black text-stone-600 transition hover:border-primary hover:text-primary disabled:opacity-40"
+                    >
+                      Reset Default
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveScaleOptions}
+                      disabled={scaleSaving || scaleInvalid || !scaleDirty}
+                      className="rounded-2xl bg-stone-950 px-5 py-2 text-xs font-black text-white shadow-lg shadow-stone-950/15 transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {scaleSaving ? "Menyimpan..." : "Simpan Scale"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-5 overflow-x-auto rounded-2xl border border-stone-200 bg-white">
+                  <table className="min-w-full divide-y divide-stone-200 text-xs">
+                    <thead className="bg-stone-50 text-[10px] uppercase tracking-widest text-stone-500">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Definisi</th>
+                        <th className="px-4 py-3 text-center">AHP</th>
+                        <th className="px-4 py-3 text-center">Lower</th>
+                        <th className="px-4 py-3 text-center">Middle</th>
+                        <th className="px-4 py-3 text-center">Upper</th>
+                        <th className="px-4 py-3 text-center">Reciprocal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100 bg-white">
+                      {scaleDraft.map((option) => {
+                        const [lower, middle, upper] = option.tfn || [1, 1, 1];
+                        const reciprocal = [
+                          upper ? 1 / upper : 0,
+                          middle ? 1 / middle : 0,
+                          lower ? 1 / lower : 0,
+                        ];
+                        const rowInvalid = lower <= 0 || middle <= 0 || upper <= 0 || lower > middle || middle > upper;
+                        return (
+                          <tr key={option.code} className={rowInvalid ? "bg-rose-50" : ""}>
+                            <td className="px-4 py-3">
+                              <p className="font-black text-stone-950">{option.label}</p>
+                              <p className="mt-1 text-[10px] font-semibold text-stone-400">Scale code: {option.code}</p>
+                            </td>
+                            <td className="px-4 py-3 text-center font-black text-primary">{option.ahpValue}</td>
+                            {[lower, middle, upper].map((value, index) => (
+                              <td key={`${option.code}-${index}`} className="px-2 py-3 text-center">
+                                <input
+                                  type="number"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={value}
+                                  onChange={(event) => updateScaleDraftValue(option.code, index, event.target.value)}
+                                  className="h-10 w-20 rounded-xl border border-stone-200 bg-white px-2 text-center text-xs font-black text-stone-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
+                                />
+                              </td>
+                            ))}
+                            <td className="px-4 py-3 text-center font-mono text-[11px] font-bold text-stone-600">
+                              ({reciprocal.map(formatScaleNumber).join(", ")})
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {(scaleStatus || scaleInvalid) && (
+                  <div className={`mt-4 rounded-2xl px-4 py-3 text-xs font-bold ${
+                    scaleInvalid
+                      ? "border border-rose-200 bg-rose-50 text-rose-700"
+                      : "border border-amber-200 bg-amber-50 text-amber-800"
+                  }`}>
+                    {scaleInvalid ? "Scale belum valid. Pastikan lower <= middle <= upper dan semua angka lebih dari 0." : scaleStatus}
+                  </div>
+                )}
+              </section>
 
               <div className="space-y-12 pb-12">
                 {rubricPackages.map((pkg, packageIndex) => (
@@ -905,13 +891,16 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                         return (
                           <button
                             key={opt.label}
-                            onClick={() => setPairwise({
-                              ...pairwise,
-                              [pkg.key]: {
-                                ...(pairwise[pkg.key] || {}),
-                                [idx]: { left: c1, right: c2, scale: opt.label },
-                              },
-                            })}
+                            onClick={() => {
+                              setPairwise({
+                                ...pairwise,
+                                [pkg.key]: {
+                                  ...(pairwise[pkg.key] || {}),
+                                  [idx]: { left: c1, right: c2, scale: opt.label },
+                                },
+                              });
+                              setResult(null);
+                            }}
                             className={`group relative flex flex-col items-center rounded-[2rem] border-2 p-5 transition-all duration-300 ${
                               isActive
                                 ? "border-primary bg-primary/10 shadow-xl shadow-primary/10 -translate-y-1"
@@ -973,7 +962,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                       <button
                         type="button"
                         disabled={safePackageIndex === 0}
-                        onClick={() => setFuzzyPackageIndex((index) => Math.max(0, index - 1))}
+                        onClick={() => setFuzzyPackageIndex(Math.max(0, safePackageIndex - 1))}
                         className="flex h-10 w-10 items-center justify-center rounded-xl border border-stone-200 text-stone-700 transition-all hover:border-stone-400 disabled:opacity-35"
                         aria-label="Paket sebelumnya"
                       >
@@ -988,7 +977,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                       <button
                         type="button"
                         disabled={safePackageIndex >= packageEntries.length - 1}
-                        onClick={() => setFuzzyPackageIndex((index) => Math.min(packageEntries.length - 1, index + 1))}
+                        onClick={() => setFuzzyPackageIndex(Math.min(packageEntries.length - 1, safePackageIndex + 1))}
                         className="flex h-10 w-10 items-center justify-center rounded-xl border border-stone-200 text-stone-700 transition-all hover:border-stone-400 disabled:opacity-35"
                         aria-label="Paket berikutnya"
                       >
@@ -1169,157 +1158,6 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
             );
           })()}
 
-          {/* STEP 4: FUZZY SCALE */}
-          {false && step === 4 && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
-              <div className="mb-2">
-                <h2 className="text-2xl font-black text-stone-900">Mathematical Calculation Flow</h2>
-                <p className="text-sm text-stone-500 mt-2 leading-relaxed max-w-3xl">
-                  Bagian ini menunjukkan transformasi data dari pilihan verbal yang Anda masukkan menjadi bobot matematis menggunakan logika 
-                  <strong> Chang's Extent Analysis</strong>. Ikuti langkah-langkah di bawah untuk memahami bagaimana sistem memproses subskill ATL Anda.
-                </p>
-              </div>
-
-              <div className="rounded-[2rem] border-2 border-stone-100 bg-white p-8 shadow-xl shadow-stone-200/50">
-                {result?.debug ? (
-                  <div className="space-y-12">
-                    <section>
-                      <h3 className="flex items-center gap-3 text-sm font-black uppercase tracking-widest text-primary mb-4">
-                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[10px] text-white">01</span>
-                        Matriks Triangular Fuzzy Number (TFN)
-                      </h3>
-                      <p className="text-sm text-stone-600 mb-6 leading-relaxed">
-                        Langkah pertama adalah mengubah input kualitatif Anda menjadi angka fuzzy segitiga (L, M, U). 
-                        Nilai di bawah diagonal utama merupakan nilai kebalikan (reciprocal) otomatis untuk menjaga konsistensi.
-                      </p>
-                      <div className="overflow-x-auto rounded-2xl border border-stone-100 bg-stone-50/50">
-                        <table className="min-w-full divide-y divide-stone-200">
-                          <thead className="bg-stone-100/50">
-                            <tr>
-                              <th className="px-4 py-4 text-left text-[10px] font-bold uppercase tracking-widest text-stone-500">Subskill</th>
-                              {criteria.map((crit) => (
-                                <th key={crit} className="px-4 py-4 text-center text-[10px] font-bold uppercase tracking-widest text-stone-500">{crit}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-stone-100 bg-white">
-                            {criteria.map((rowCrit, rowIndex) => (
-                              <tr key={rowCrit} className="hover:bg-stone-50 transition-colors">
-                                <td className="px-4 py-4 whitespace-nowrap text-sm font-bold text-stone-900 bg-stone-50/30">{rowCrit}</td>
-                                {criteria.map((colCrit, colIndex) => {
-                                  const tfn = result.debug.matrix[rowIndex][colIndex];
-                                  return (
-                                    <td key={colCrit} className="px-4 py-4 whitespace-nowrap text-center text-sm font-mono text-stone-600">
-                                      ({toFraction(tfn[0])}, {toFraction(tfn[1])}, {toFraction(tfn[2])})
-                                    </td>
-                                  );
-                                })}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
-
-                    <section>
-                      <h3 className="flex items-center gap-3 text-sm font-black uppercase tracking-widest text-primary mb-4">
-                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[10px] text-white">02</span>
-                        Akumulasi Bobot per Subskill (Row Sums)
-                      </h3>
-                      <p className="text-sm text-stone-600 mb-6 leading-relaxed">
-                        Sistem menjumlahkan seluruh nilai TFN pada setiap baris untuk melihat total intensitas kepentingan setiap subskill 
-                        relatif terhadap subskill lainnya.
-                      </p>
-                      <div className="overflow-x-auto rounded-2xl border border-stone-100 bg-stone-50/50">
-                        <table className="min-w-full divide-y divide-stone-200">
-                          <thead className="bg-stone-100/50">
-                            <tr>
-                              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">Subskill</th>
-                              <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-stone-500">Jumlah TFN</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-stone-200 bg-white">
-                            {criteria.map((crit, idx) => (
-                              <tr key={crit} className="hover:bg-stone-50 transition-colors">
-                                <td className="px-4 py-3 whitespace-nowrap text-sm font-bold text-stone-900">{crit}</td>
-                                <td className="px-4 py-3 whitespace-nowrap text-center text-sm font-mono text-stone-700">
-                                  ({result.debug.rowSums[idx][0].toFixed(2)}, {result.debug.rowSums[idx][1].toFixed(2)}, {result.debug.rowSums[idx][2].toFixed(2)})
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
-
-                    <section className="bg-stone-50 p-8 rounded-[2rem] border border-stone-200">
-                      <h3 className="flex items-center gap-3 text-sm font-black uppercase tracking-widest text-primary mb-4">
-                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[10px] text-white">03</span>
-                        Total Nilai Fuzzy Keseluruhan
-                      </h3>
-                      <p className="text-sm text-stone-600 mb-6 leading-relaxed">
-                        Seluruh Row Sums dijumlahkan untuk mendapatkan nilai total fuzzy. Nilai ini akan menjadi pembagi (denominator) 
-                        untuk menentukan nilai sintetis di langkah berikutnya.
-                      </p>
-                      <div className="flex flex-col items-center justify-center p-6 bg-white rounded-2xl border-2 border-primary/20 shadow-inner">
-                        <span className="text-[10px] font-black text-stone-400 uppercase tracking-[0.2em] mb-2">Total Akumulasi</span>
-                        <div className="text-2xl font-mono font-black text-stone-900">
-                          ({result.debug.total[0].toFixed(2)}, {result.debug.total[1].toFixed(2)}, {result.debug.total[2].toFixed(2)})
-                        </div>
-                      </div>
-                    </section>
-
-                    <section>
-                      <h3 className="flex items-center gap-3 text-sm font-black uppercase tracking-widest text-primary mb-4">
-                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[10px] text-white">04</span>
-                        Perhitungan Nilai Sintetis Fuzzy (S_i)
-                      </h3>
-                      <p className="text-sm text-stone-600 mb-6 leading-relaxed">
-                        Setiap <strong>Row Sum</strong> dibagi dengan <strong>Total Nilai Fuzzy</strong> (dengan urutan L, M, U yang dibalik pada pembagi) 
-                        untuk mendapatkan <i>Synthetic Extent</i> dari masing-masing subskill.
-                      </p>
-                      <div className="overflow-x-auto rounded-2xl border border-stone-100 bg-stone-50/50">
-                        <table className="min-w-full divide-y divide-stone-200">
-                          <thead className="bg-stone-100/50">
-                            <tr>
-                              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">Subskill</th>
-                              <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-stone-500">S_i</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-stone-200 bg-white">
-                            {criteria.map((crit, idx) => (
-                              <tr key={crit} className="hover:bg-stone-50 transition-colors">
-                                <td className="px-4 py-3 whitespace-nowrap text-sm font-bold text-stone-900">{crit}</td>
-                                <td className="px-4 py-3 whitespace-nowrap text-center text-sm font-mono text-stone-700">
-                                  ({result.debug.S[idx][0].toFixed(2)}, {result.debug.S[idx][1].toFixed(2)}, {result.debug.S[idx][2].toFixed(2)})
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
-
-                    <section className="border-t border-stone-100 pt-8">
-                      <h3 className="flex items-center gap-3 text-sm font-black uppercase tracking-widest text-primary mb-4">
-                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[10px] text-white">05</span>
-                        Komparasi Derajat Kemungkinan (Vector d)
-                      </h3>
-                      <p className="text-sm text-stone-600 leading-relaxed italic">
-                        Pada tahap ini, setiap nilai S_i dibandingkan satu sama lain untuk melihat kemungkinan suatu subskill lebih besar dari subskill lainnya. 
-                        Hasil dari perbandingan ini adalah nilai minimum dari derajat kemungkinan yang akan dinormalisasi pada tahap <strong>Result</strong>.
-                      </p>
-                    </section>
-                  </div>
-                ) : (
-                  <div className="rounded-3xl border border-stone-200 bg-stone-50 p-8 text-stone-600">
-                    Lengkapi semua perbandingan pairwise untuk melihat langkah-langkah perhitungan Fuzzy AHP di sini.
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* STEP 4: RESULT & VALIDATION */}
           {step === 4 && result && (
             <div className="animate-in zoom-in-95 duration-500 space-y-10">
@@ -1486,7 +1324,10 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setResultVisualIndex((index) => (index + resultVisualTabs.length - 1) % resultVisualTabs.length)}
+                      onClick={() => {
+                        setResultHover(null);
+                        setResultVisualIndex((index) => (index + resultVisualTabs.length - 1) % resultVisualTabs.length);
+                      }}
                       className="flex h-10 w-10 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-600 transition hover:border-primary hover:text-primary"
                     >
                       <span className="material-symbols-outlined text-lg">chevron_left</span>
@@ -1496,7 +1337,10 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setResultVisualIndex((index) => (index + 1) % resultVisualTabs.length)}
+                      onClick={() => {
+                        setResultHover(null);
+                        setResultVisualIndex((index) => (index + 1) % resultVisualTabs.length);
+                      }}
                       className="flex h-10 w-10 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-600 transition hover:border-primary hover:text-primary"
                     >
                       <span className="material-symbols-outlined text-lg">chevron_right</span>
@@ -1754,10 +1598,18 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
             <span className="material-symbols-outlined text-lg">arrow_back</span> Kembali
           </button>
 
-          {step < 4 ? (
+          {step === 2 ? (
+            <button
+              onClick={calculateResult}
+              disabled={calculatingWeights || rubricPackages.length === 0 || scaleDirty || scaleInvalid}
+              className="flex items-center gap-2 rounded-2xl bg-stone-950 px-8 py-3 text-sm font-black text-white shadow-xl shadow-stone-950/20 transition-all hover:bg-stone-800 hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <span className="material-symbols-outlined text-lg">{calculatingWeights ? "hourglass_top" : "calculate"}</span>
+              {calculatingWeights ? "Menghitung di Backend..." : "Hitung Bobot"}
+            </button>
+          ) : step < 4 ? (
             <button
               onClick={() => setStep(step + 1)}
-              disabled={step === 2 && !result}
               className="flex items-center gap-2 rounded-2xl bg-stone-950 px-8 py-3 text-sm font-black text-white shadow-xl shadow-stone-950/20 transition-all hover:bg-stone-800 hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {step === 3 ? "Lihat Result" : "Lanjutkan"} <span className="material-symbols-outlined text-lg">arrow_forward</span>
@@ -1765,9 +1617,11 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
           ) : (
             <button 
               onClick={handleSaveToSystem}
-              className="flex items-center gap-2 rounded-2xl bg-primary px-8 py-3 text-sm font-black text-white shadow-xl shadow-primary/20 transition-all hover:bg-secondary hover:-translate-y-0.5 active:scale-95"
+              disabled={savingWeights}
+              className="flex items-center gap-2 rounded-2xl bg-primary px-8 py-3 text-sm font-black text-white shadow-xl shadow-primary/20 transition-all hover:bg-secondary hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <span className="material-symbols-outlined text-lg">save</span> Simpan Bobot ke Sistem
+              <span className="material-symbols-outlined text-lg">{savingWeights ? "hourglass_top" : "save"}</span>
+              {savingWeights ? "Menyimpan..." : "Simpan Bobot ke Sistem"}
             </button>
           )}
         </div>
