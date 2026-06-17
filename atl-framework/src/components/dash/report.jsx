@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import Sidebar from "./sidebar";
-import { exportReportExcel, getClasses, getReport, getTopics } from "../../services/atlApi";
+import { exportReportExcel, getClasses, getCurrentUser, getReport, getTopics } from "../../services/atlApi";
+import { filterSubjectsByUserAccess } from "../../services/accessControl";
 import {
   getATLCategoryMeta,
   getNoDataLevel,
@@ -97,6 +98,7 @@ export default function Report() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [hasNewData, setHasNewData] = useState(initialState.isDirty);
   const [updateError, setUpdateError] = useState("");
+  const [currentUser, setCurrentUser] = useState(null);
 
   const [showExcelPreview, setShowExcelPreview] = useState(false);
   const [excelPreviewRows, setExcelPreviewRows] = useState([]);
@@ -136,9 +138,10 @@ export default function Report() {
     setIsUpdating(true);
     setUpdateError("");
     try {
-      const [classesResult, topicsResult, reportResult] = await Promise.allSettled([
+      const [classesResult, topicsResult, userResult, reportResult] = await Promise.allSettled([
         getClasses(),
         getTopics(),
+        getCurrentUser(),
         getReport(selectedClass, selectedTopic),
       ]);
       const cache = readReportCache();
@@ -149,8 +152,11 @@ export default function Report() {
         nextCatalog.classes = labels;
       }
       if (topicsResult.status === "fulfilled") {
-        setSubjects(topicsResult.value || []);
-        nextCatalog.subjects = topicsResult.value || [];
+        const user = userResult.status === "fulfilled" ? userResult.value : currentUser;
+        const accessibleSubjects = filterSubjectsByUserAccess(topicsResult.value || [], user);
+        setCurrentUser(user);
+        setSubjects(accessibleSubjects);
+        nextCatalog.subjects = accessibleSubjects;
       }
       if (classesResult.status === "fulfilled" || topicsResult.status === "fulfilled") {
         nextCatalog.updatedAt = new Date().toISOString();
@@ -184,6 +190,28 @@ export default function Report() {
       setIsUpdating(false);
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentUser().then((user) => {
+      if (cancelled) return;
+      const accessibleSubjects = filterSubjectsByUserAccess(subjects, user);
+      setCurrentUser(user);
+      if (accessibleSubjects.length > 0) {
+        setSubjects(accessibleSubjects);
+        if (!accessibleSubjects.some((subject) => subject.id === selectedSubject)) {
+          const nextSubject = accessibleSubjects[0];
+          const nextTopic = nextSubject.topics?.[0]?.id || "";
+          setSelectedSubject(nextSubject.id);
+          setSelectedTopic(nextTopic);
+          selectSnapshot(selectedClass, nextTopic);
+        }
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const currentSubject = useMemo(
     () => subjects.find((s) => s.id === selectedSubject) || subjects[0],

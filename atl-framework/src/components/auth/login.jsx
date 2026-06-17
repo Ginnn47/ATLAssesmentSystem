@@ -130,7 +130,7 @@ export default function Login() {
                     </div>
                     <input
                       type="text"
-                      placeholder="Enter your credential"
+                      placeholder="Masukkan username, email, atau NIP"
                       className="w-full rounded-2xl border border-stone-200 bg-stone-50 py-4 pl-12 pr-4 font-body text-sm text-stone-900 outline-none transition duration-200 placeholder:text-stone-400 focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/15"
                       value={username}
                       onChange={(event) => setUsername(event.target.value)}
@@ -156,7 +156,7 @@ export default function Login() {
                     </div>
                     <input
                       type={showPassword ? "text" : "password"}
-                      placeholder="........"
+                      placeholder="Masukkan password akun"
                       className="w-full rounded-2xl border border-stone-200 bg-stone-50 py-4 pl-12 pr-14 font-body text-sm text-stone-900 outline-none transition duration-200 placeholder:text-stone-400 focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/15"
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}

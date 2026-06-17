@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "./sidebar";
-import { getDashboardAnalytics } from "../../services/atlApi";
+import { getCurrentUser, getDashboardAnalytics } from "../../services/atlApi";
+import { ROLE_CODES, getUserRoleCodes, isAdminUser } from "../../services/accessControl";
 import { getATLDistributionTemplate, getNoDataLevel } from "../../services/labelRegistry";
 import posterFuzzy from "../../assets/posterFuzzy.png";
 
@@ -88,6 +89,11 @@ const overviewTone = {
     card: "border-violet-100 bg-gradient-to-br from-violet-50 via-white to-violet-100/80 shadow-violet-100/70",
     icon: "bg-violet-100 text-violet-600",
     value: "text-violet-600",
+  },
+  green: {
+    card: "border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-emerald-100/80 shadow-emerald-100/70",
+    icon: "bg-emerald-100 text-emerald-600",
+    value: "text-emerald-600",
   },
 };
 
@@ -236,6 +242,7 @@ const ClassBarChart = ({ rows }) => {
 
 export default function Dashboard() {
   const [dashboard, setDashboard] = useState(emptyDashboard);
+  const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [backendError, setBackendError] = useState("");
   const [showFlowPoster, setShowFlowPoster] = useState(false);
@@ -256,6 +263,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadDashboard();
+    getCurrentUser().then((user) => setCurrentUser(user));
     window.addEventListener("focus", loadDashboard);
     window.addEventListener("atl-data-updated", loadDashboard);
     return () => {
@@ -274,6 +282,29 @@ export default function Dashboard() {
   }, [showFlowPoster]);
 
   const summary = dashboard.summary || emptyDashboard.summary;
+  const roleCodes = getUserRoleCodes(currentUser);
+  const isAdminDashboard = isAdminUser(currentUser);
+  const adminOverviewCards = [
+    { label: "Total User", value: summary.totalUsers ?? "-", note: "Akun yang terdaftar di sistem.", icon: "manage_accounts", color: "blue" },
+    { label: "Total Guru Aktif", value: summary.totalGuruAktif ?? "-", note: "Guru aktif non-admin.", icon: "group", color: "green" },
+    { label: "Total Siswa", value: summary.totalStudents ?? 0, note: "Siswa aktif dalam katalog akademik.", icon: "groups", color: "amber" },
+    { label: "Total Kelas", value: summary.totalClasses ?? "-", note: "Kelas aktif tahun ajaran ini.", icon: "home_work", color: "blue" },
+    { label: "Total Subject", value: summary.totalSubjects ?? "-", note: "Mapel aktif yang tersedia.", icon: "menu_book", color: "sky" },
+    { label: "Active Topic", value: summary.totalActiveTopic ?? "-", note: "Topik pembelajaran aktif.", icon: "topic", color: "violet" },
+    { label: "Assessment Records", value: summary.assessmentRecords ?? "-", note: "Record penilaian tersimpan.", icon: "assignment_turned_in", color: "green" },
+    { label: "Pairwise Config", value: summary.pairwiseConfiguration ?? summary.criteriaCount ?? 0, note: "Konfigurasi bobot dan kriteria.", icon: "hub", color: "violet" },
+  ];
+  const evaluatorOverviewCards = [
+    { label: "Kelas yang Diampu", value: currentUser?.classAccess?.length || "-", note: "Kelas sesuai akses akun.", icon: "home_work", color: "blue" },
+    { label: "Jumlah Siswa", value: summary.totalStudents ?? 0, note: "Siswa pada data akademik aktif.", icon: "groups", color: "amber" },
+    { label: "Assessment Progress", value: `${summary.completion || 0}%`, note: "Progress penilaian tersimpan.", icon: "fact_check", color: "sky" },
+    { label: "Pending Assessment", value: Math.max(0, Number(summary.totalStudents || 0) - Number(summary.assessedStudents || 0)), note: "Estimasi siswa belum lengkap dinilai.", icon: "pending_actions", color: "violet" },
+  ];
+  const overviewCards = isAdminDashboard ? adminOverviewCards : evaluatorOverviewCards;
+  const dashboardTitle = isAdminDashboard ? "Monitoring Sistem ATL" : "Dashboard Pekerjaan Guru";
+  const dashboardSubtitle = isAdminDashboard
+    ? "Pantau user, data akademik, cakupan assessment, dan status konfigurasi sistem."
+    : "Pantau kelas, progress assessment, siswa prioritas, dan insight penilaian.";
   const insight = useMemo(() => {
     const focus = summary.focusATL || "-";
     const strongest = summary.strongestATL || "-";
@@ -290,8 +321,8 @@ export default function Dashboard() {
             <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-xs font-bold text-stone-400">Dashboard ATL</p>
-                <h1 className="mt-3 text-3xl font-black tracking-tight text-stone-950">Monitoring Penilaian Siswa</h1>
-                <p className="mt-2 text-sm font-semibold text-stone-500">Pantau cakupan assessment, performa ATL, dan kelas yang membutuhkan tindak lanjut.</p>
+                <h1 className="mt-3 text-3xl font-black tracking-tight text-stone-950">{dashboardTitle}</h1>
+                <p className="mt-2 text-sm font-semibold text-stone-500">{dashboardSubtitle}</p>
               </div>
               <div className="flex items-center gap-4">
                 <button className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-bold text-stone-700 shadow-sm">
@@ -323,8 +354,12 @@ export default function Dashboard() {
                     <span className="material-symbols-outlined text-[24px]">fact_check</span>
                   </div>
                   <div>
-                    <h2 className="text-lg font-black leading-tight text-stone-950">Gambaran Umum Penilaian</h2>
-                    <p className="mt-1 text-sm font-semibold text-stone-500">Ringkasan langsung dari data assessment, rubrik, siswa, dan topik aktif.</p>
+                    <h2 className="text-lg font-black leading-tight text-stone-950">
+                      {isAdminDashboard ? "Gambaran Umum Sistem" : "Gambaran Umum Penilaian"}
+                    </h2>
+                    <p className="mt-1 text-sm font-semibold text-stone-500">
+                      {isAdminDashboard ? "Ringkasan langsung dari user, akademik, assessment, dan konfigurasi ATL." : "Ringkasan pekerjaan guru berdasarkan kelas, siswa, dan progress assessment."}
+                    </p>
                   </div>
                 </div>
                 <div className="inline-flex w-fit items-center gap-2 rounded-full bg-stone-100 px-3 py-2 text-[11px] font-black text-stone-500">
@@ -333,8 +368,73 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-                {(dashboard.overviewCards || []).map((item) => <StatCard key={item.label} item={item} />)}
+                {overviewCards.map((item) => <StatCard key={item.label} item={item} />)}
               </div>
+            </section>
+
+            <section className="grid gap-5 lg:grid-cols-3">
+              {isAdminDashboard && (
+                <>
+                  <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+                    <h2 className="text-base font-black text-stone-950">User Distribution</h2>
+                    <p className="mt-2 text-xs font-semibold text-stone-500">Evaluator, PJ Mapel, dan ATL Expert aktif.</p>
+                    <div className="mt-5 space-y-3">
+                      {[
+                        ["Evaluator", summary.evaluatorUsers ?? "-", "bg-stone-100 text-stone-700"],
+                        ["PJ Mapel", summary.subjectCoordinatorUsers ?? "-", "bg-amber-100 text-amber-700"],
+                        ["ATL Expert", summary.atlExpertUsers ?? "-", "bg-violet-100 text-violet-700"],
+                      ].map(([label, value, tone]) => (
+                        <div key={label} className="flex items-center justify-between rounded-xl border border-stone-200 px-3 py-3">
+                          <span className="text-xs font-black text-stone-700">{label}</span>
+                          <span className={`rounded-full px-3 py-1 text-xs font-black ${tone}`}>{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+                    <h2 className="text-base font-black text-stone-950">Assessment Coverage</h2>
+                    <p className="mt-2 text-xs font-semibold text-stone-500">Cakupan kelas dan topik yang sudah dinilai.</p>
+                    <div className="mt-5 space-y-4">
+                      <div>
+                        <div className="mb-2 flex justify-between text-xs font-black text-stone-600"><span>Kelas dinilai</span><span>{summary.assessedClasses ?? "-"}/{summary.totalClasses ?? "-"}</span></div>
+                        <div className="h-2 rounded-full bg-stone-100"><div className="h-full rounded-full bg-primary" style={{ width: `${summary.classCoverage || 0}%` }} /></div>
+                      </div>
+                      <div>
+                        <div className="mb-2 flex justify-between text-xs font-black text-stone-600"><span>Topik dinilai</span><span>{summary.topicActive || 0}/{summary.totalActiveTopic || 0}</span></div>
+                        <div className="h-2 rounded-full bg-stone-100"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${summary.topicCoverage || 0}%` }} /></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+                    <h2 className="text-base font-black text-stone-950">Configuration Status</h2>
+                    <p className="mt-2 text-xs font-semibold text-stone-500">Status konfigurasi utama ATL.</p>
+                    <div className="mt-5 space-y-3">
+                      {[
+                        ["Pairwise Configuration", summary.pairwiseConfiguration ? "Ready" : "Review"],
+                        ["Weight Available", summary.weightAvailable ? "Ready" : "Review"],
+                        ["Active Semester", dashboard.meta?.semester || "-"],
+                      ].map(([label, value]) => (
+                        <div key={label} className="flex items-center justify-between rounded-xl bg-stone-50 px-3 py-3">
+                          <span className="text-xs font-black text-stone-700">{label}</span>
+                          <span className="text-xs font-black text-primary">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+              {!isAdminDashboard && roleCodes.includes(ROLE_CODES.SUBJECT_COORDINATOR) && (
+                <div className="rounded-[1.6rem] border border-amber-200 bg-amber-50/70 p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)] lg:col-span-3">
+                  <h2 className="text-base font-black text-stone-950">Subject Performance</h2>
+                  <p className="mt-2 text-xs font-semibold text-stone-600">Total topic {currentUser?.subjectAccess?.length || "-"} mapel akses, average ATL {summary.average || 0}, best class {summary.bestClass || "-"}.</p>
+                </div>
+              )}
+              {!isAdminDashboard && roleCodes.includes(ROLE_CODES.ATL_EXPERT) && (
+                <div className="rounded-[1.6rem] border border-violet-200 bg-violet-50/70 p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)] lg:col-span-3">
+                  <h2 className="text-base font-black text-stone-950">Weight Configuration Status</h2>
+                  <p className="mt-2 text-xs font-semibold text-stone-600">Pairwise dan bobot siap ditinjau melalui menu Weight Management sesuai mapel yang diampu.</p>
+                </div>
+              )}
             </section>
 
             <section className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">

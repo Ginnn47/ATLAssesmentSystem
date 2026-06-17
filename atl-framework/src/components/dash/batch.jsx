@@ -7,6 +7,7 @@ import {
   getAssessmentDraft,
   getAssessmentFilterState,
   getClasses,
+  getCurrentUser,
   getReport,
   getStudents,
   getTopics,
@@ -17,8 +18,9 @@ import {
   saveAssessmentFilterState,
   updateAssessmentLiveDraft,
 } from "../../services/atlApi";
+import { filterSubjectsByUserAccess, subjectDisplayName } from "../../services/accessControl";
 import { getRatingMeta, getScoreLevel, hydrateLabelRegistry, ratingOptions } from "../../services/labelRegistry";
-import { getSubjectTopicMapByLabel } from "../../services/topicCatalog";
+import { getSubjectData, getSubjectTopicMapByLabel } from "../../services/topicCatalog";
 
 const getLevelStyle = (code) => {
   const meta = getRatingMeta(code);
@@ -36,6 +38,13 @@ const normalizeRatingLabel = (label) =>
 
 const getScoreCategory = getScoreLevel;
 
+const buildSubjectTopicMap = (subjects, user) =>
+  filterSubjectsByUserAccess(subjects, user).reduce((acc, subject) => {
+    const label = subjectDisplayName(subject);
+    if (label) acc[label] = subject.topics || [];
+    return acc;
+  }, {});
+
 export default function BatchInputATL() {
   const [classOptions, setClassOptions] = useState([]);
   const [selectedClass, setSelectedClass] = useState("");
@@ -47,6 +56,8 @@ export default function BatchInputATL() {
   const [dataVersion, setDataVersion] = useState(0);
   const [apiStudents, setApiStudents] = useState([]);
   const [subjectTopicMap, setSubjectTopicMap] = useState(getSubjectTopicMapByLabel);
+  const [subjectData, setSubjectData] = useState(getSubjectData);
+  const [currentUser, setCurrentUser] = useState(null);
   const [filtersHydrated, setFiltersHydrated] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
   const [saveMessage, setSaveMessage] = useState("");
@@ -65,15 +76,24 @@ export default function BatchInputATL() {
 
   useEffect(() => {
     hydrateLabelRegistry().then(() => setDataVersion((version) => version + 1));
-    Promise.allSettled([getClasses(), getTopics()])
-      .then(([classesResult, topicsResult]) => {
+    Promise.allSettled([getClasses(), getTopics(), getCurrentUser()])
+      .then(([classesResult, topicsResult, userResult]) => {
         const classes = classesResult.status === "fulfilled" ? classesResult.value : [];
         const labels = classes.map((item) => item.displayName || item.display_name || item.code).filter(Boolean);
         if (labels.length > 0) {
           setClassOptions(labels);
           setSelectedClass((current) => current || labels[0] || "");
         }
-        setSubjectTopicMap(getSubjectTopicMapByLabel());
+        const user = userResult.status === "fulfilled" ? userResult.value : null;
+        const subjects = topicsResult.status === "fulfilled" ? topicsResult.value || [] : getSubjectData();
+        const nextMap = buildSubjectTopicMap(subjects, user);
+        const subjectKeys = Object.keys(nextMap);
+        setCurrentUser(user);
+        setSubjectData(subjects);
+        setSubjectTopicMap(nextMap);
+        if (subjectKeys.length > 0) {
+          setSelectedSubject((current) => (subjectKeys.includes(current) ? current : subjectKeys[0]));
+        }
         if (classesResult.status === "rejected" || topicsResult.status === "rejected") {
           setBackendStatus("offline");
           setBackendError("Data backend belum tersambung. Menampilkan data terakhir.");
@@ -83,6 +103,16 @@ export default function BatchInputATL() {
         }
       });
   }, []);
+
+  useEffect(() => {
+    const nextMap = buildSubjectTopicMap(subjectData, currentUser);
+    const subjectKeys = Object.keys(nextMap);
+    if (subjectKeys.length === 0) return;
+    setSubjectTopicMap(nextMap);
+    if (!subjectKeys.includes(selectedSubject)) {
+      setSelectedSubject(subjectKeys[0]);
+    }
+  }, [currentUser, selectedSubject, subjectData]);
 
   const topicOptions = useMemo(() => subjectTopicMap[selectedSubject] || [], [selectedSubject, subjectTopicMap]);
   const selectedTopic = topicOptions[selectedTopicIndex] || { id: "", label: "Pilih Topik" };
@@ -119,7 +149,11 @@ export default function BatchInputATL() {
       setDataVersion((version) => version + 1);
       setReportVersion((version) => version + 1);
     };
-    const syncTopics = () => setSubjectTopicMap(getSubjectTopicMapByLabel());
+    const syncTopics = () => {
+      const nextSubjects = getSubjectData();
+      setSubjectData(nextSubjects);
+      setSubjectTopicMap(buildSubjectTopicMap(nextSubjects, currentUser));
+    };
 
     window.addEventListener("focus", syncDataFromStorage);
     window.addEventListener("storage", syncDataFromStorage);
@@ -136,7 +170,7 @@ export default function BatchInputATL() {
       window.removeEventListener("atl-live-drafts-updated", syncDataFromStorage);
       window.removeEventListener("atl-topics-updated", syncTopics);
     };
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     let cancelled = false;

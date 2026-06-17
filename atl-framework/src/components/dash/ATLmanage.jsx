@@ -3,7 +3,8 @@ import Sidebar from "./sidebar";
 import criteriamanagement from "./criteriamanagement";
 import ExpertManagement from "./expertmanagement";
 import { dummyATL } from "../dummyData/dummyATL";
-import { getTopics, hydrateTopic } from "../../services/atlApi";
+import { getCurrentUser, getTopics, hydrateTopic } from "../../services/atlApi";
+import { filterSubjectsByUserAccess } from "../../services/accessControl";
 import { getATLCategoryMeta, getSubskillMeta } from "../../services/labelRegistry";
 
 const getFittedSkillTitleStyle = (title) => {
@@ -80,8 +81,8 @@ const getInitialSummaryTopic = () => {
   return window.localStorage.getItem(SUMMARY_TOPIC_KEY) || "";
 };
 
-export default function ATLmanage() {
-  const [activeTab, setActiveTab] = useState("criteria");
+export default function ATLmanage({ initialTab = "criteria" }) {
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [selectedTopic, setSelectedTopic] = useState(getInitialSummaryTopic);
   const [subjectTopics, setSubjectTopics] = useState([]);
   const [showWeightDetail, setShowWeightDetail] = useState(false);
@@ -97,10 +98,11 @@ export default function ATLmanage() {
   };
 
   useEffect(() => {
-    getTopics()
-      .then((subjects) => {
-        setSubjectTopics(subjects || []);
-        const topicIds = (subjects || []).flatMap((subject) => (subject.topics || []).map((topic) => topic.id));
+    Promise.all([getTopics(), getCurrentUser()])
+      .then(([subjects, user]) => {
+        const accessibleSubjects = filterSubjectsByUserAccess(subjects || [], user);
+        setSubjectTopics(accessibleSubjects);
+        const topicIds = accessibleSubjects.flatMap((subject) => (subject.topics || []).map((topic) => topic.id));
         setSelectedTopic((current) => {
           const nextTopic = current && topicIds.includes(current) ? current : topicIds[0] || "";
           if (nextTopic && typeof window !== "undefined") {

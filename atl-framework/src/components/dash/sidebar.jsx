@@ -2,50 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import schoolLogo from "../../assets/Cita_Hati_Christian_School_Logo.jpeg";
 import { getCurrentUser, logoutUser } from "../../services/atlApi";
+import { getGrantedFeatures, getSidebarMenuGroups, getUserRoleNames } from "../../services/accessControl";
 
 export default function Sidebar({ user }) {
   const navigate = useNavigate();
-  const menuItems = [
-    {
-      icon: "space_dashboard",
-      label: "Dashboard",
-      key: "dashboard",
-      to: "/dashboard",
-    },
-    {
-      icon: "groups",
-      label: "Manajemen Kelas",
-      key: "students",
-      to: "/students",
-    },
-    {
-      icon: "edit_note",
-      label: "Input Penilaian ATL",
-      key: "input-atl",
-      to: "/input-atl",
-    },
-    {
-      icon: "poll",
-      label: "Laporan Penilaian",
-      key: "report",
-      to: "/reports",
-    },
-  ];
-
-  const configItems = [
-    {
-      icon: "manage_accounts",
-      label: "Manajemen User",
-      key: "user",
-      to: "/settings/users",
-    },
-    {
-      icon: "tune",
-      label: "Manajemen Kriteria",
-      key: "atl",
-      to: "/atl/manage",
-    },
-  ];
 
   const fallbackUser = useMemo(() => ({
     name: "Belum Login",
@@ -73,6 +33,10 @@ export default function Sidebar({ user }) {
   };
 
   const [currentUser, setCurrentUser] = useState(() => readCachedUser() || normalizeUser(user) || fallbackUser);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const { main: menuItems, config: configItems } = useMemo(() => getSidebarMenuGroups(currentUser), [currentUser]);
+  const roleNames = useMemo(() => getUserRoleNames(currentUser), [currentUser]);
+  const grantedFeatures = useMemo(() => getGrantedFeatures(currentUser), [currentUser]);
 
   useEffect(() => {
     let cancelled = false;
@@ -170,66 +134,121 @@ export default function Sidebar({ user }) {
           })}
         </div>
 
-        <div className="my-5 border-t border-stone-200" />
+        {configItems.length > 0 && (
+          <>
+            <div className="my-5 border-t border-stone-200" />
 
-        <p className="px-3 font-label text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-          Pengaturan
-        </p>
+            <p className="px-3 font-label text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+              Pengaturan
+            </p>
 
-        <div className="mt-3 space-y-1.5">
-          {configItems.map((item) => (
-            <NavLink
-              key={item.key}
-              to={item.to}
-              className={({ isActive }) =>
-                `group flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-medium transition-all duration-300 ${
-                  isActive
-                    ? "border-primary/15 bg-primary/10 text-primary shadow-[0_10px_25px_rgba(234,179,8,0.10)]"
-                    : "border-transparent text-slate-500 hover:-translate-y-0.5 hover:border-primary/20 hover:bg-stone-50 hover:text-stone-900 hover:shadow-[0_12px_24px_rgba(15,23,42,0.06)]"
-                }`
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <span
-                    className={`material-symbols-outlined text-[20px] transition-colors ${
-                      isActive ? "text-primary" : "text-slate-400 group-hover:text-primary"
-                    }`}
-                  >
-                    {item.icon}
-                  </span>
-                  <span className={item.key === "model" ? "max-w-[9rem] leading-5" : ""}>
-                    {item.label}
-                  </span>
-                </>
-              )}
-            </NavLink>
-          ))}
-        </div>
+            <div className="mt-3 space-y-1.5">
+              {configItems.map((item) => (
+                <NavLink
+                  key={item.key}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `group flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-medium transition-all duration-300 ${
+                      isActive
+                        ? "border-primary/15 bg-primary/10 text-primary shadow-[0_10px_25px_rgba(234,179,8,0.10)]"
+                        : "border-transparent text-slate-500 hover:-translate-y-0.5 hover:border-primary/20 hover:bg-stone-50 hover:text-stone-900 hover:shadow-[0_12px_24px_rgba(15,23,42,0.06)]"
+                    }`
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span
+                        className={`material-symbols-outlined text-[20px] transition-colors ${
+                          isActive ? "text-primary" : "text-slate-400 group-hover:text-primary"
+                        }`}
+                      >
+                        {item.icon}
+                      </span>
+                      <span className={item.key === "model" ? "max-w-[9rem] leading-5" : ""}>
+                        {item.label}
+                      </span>
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+          </>
+        )}
       </nav>
 
       <div className="border-t border-stone-200 bg-white/95 px-4 py-4">
-        <div className="flex items-center gap-3 rounded-2xl border border-stone-200/90 bg-white px-3 py-3 shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]">
-          <div className="flex size-10 items-center justify-center rounded-full bg-primary text-xs font-black text-white shadow-[0_10px_22px_rgba(234,179,8,0.18)]">
-            {initials || <span className="material-symbols-outlined text-[20px]">person</span>}
-          </div>
+        <div className="relative">
+          {isUserMenuOpen && (
+            <div className="absolute bottom-full left-0 right-0 mb-3 overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.16)]">
+              <div className="border-b border-stone-100 px-4 py-3">
+                <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">My Access</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {roleNames.map((role) => (
+                    <span key={role} className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-black text-primary">
+                      {role}
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-2 line-clamp-2 text-[11px] font-semibold leading-5 text-stone-500">
+                  {grantedFeatures.slice(0, 3).join(", ")}
+                </p>
+              </div>
+              {[
+                ["person", "Profile", "/dashboard"],
+                ["verified_user", "My Access", "/dashboard"],
+                ["settings", "Account Settings", "/dashboard"],
+              ].map(([icon, label, to]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    navigate(to);
+                  }}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-xs font-bold text-stone-600 transition hover:bg-stone-50 hover:text-primary"
+                >
+                  <span className="material-symbols-outlined text-[18px]">{icon}</span>
+                  {label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex w-full items-center gap-3 border-t border-stone-100 px-4 py-3 text-left text-xs font-black text-rose-600 transition hover:bg-rose-50"
+              >
+                <span className="material-symbols-outlined text-[18px]">logout</span>
+                Logout
+              </button>
+            </div>
+          )}
+          <div className="flex items-center gap-3 rounded-2xl border border-stone-200/90 bg-white px-3 py-3 shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-[0_14px_28px_rgba(15,23,42,0.08)]">
+            <button
+              type="button"
+              onClick={() => setIsUserMenuOpen((current) => !current)}
+              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+            >
+              <div className="flex size-10 items-center justify-center rounded-full bg-primary text-xs font-black text-white shadow-[0_10px_22px_rgba(234,179,8,0.18)]">
+                {initials || <span className="material-symbols-outlined text-[20px]">person</span>}
+              </div>
 
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-stone-900">
-              {currentUser.name}
-            </p>
-            <p className="truncate text-xs text-slate-500">{currentUser.role}</p>
-            {currentUser.nip && <p className="truncate text-[10px] font-semibold text-slate-400">{currentUser.nip}</p>}
-          </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-stone-900">
+                  {currentUser.name}
+                </p>
+                <p className="truncate text-xs text-slate-500">{roleNames.join(" + ") || currentUser.role}</p>
+                {currentUser.nip && <p className="truncate text-[10px] font-semibold text-slate-400">{currentUser.nip}</p>}
+              </div>
+            </button>
 
-          <button
-            type="button"
-            className="flex size-9 items-center justify-center rounded-xl text-slate-400 transition-all duration-300 hover:bg-stone-100 hover:text-primary"
-            aria-label="Logout"
-            onClick={handleLogout}
-          >
-            <span className="material-symbols-outlined text-[19px]">logout</span>
-          </button>
+            <button
+              type="button"
+              className="flex size-9 items-center justify-center rounded-xl text-slate-400 transition-all duration-300 hover:bg-stone-100 hover:text-primary"
+              aria-label="Buka menu user"
+              onClick={() => setIsUserMenuOpen((current) => !current)}
+            >
+              <span className="material-symbols-outlined text-[19px]">{isUserMenuOpen ? "expand_more" : "more_vert"}</span>
+            </button>
+          </div>
         </div>
       </div>
     </aside>

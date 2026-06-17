@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect } from "react";
 import {
   calculateContextWeights,
+  getCurrentUser,
   getContextFlow,
   getTopics,
   resetContextPairwiseScale,
@@ -9,6 +10,7 @@ import {
 } from "../../services/atlApi";
 import { getSubskillColorHex, getSubskillMeta } from "../../services/labelRegistry";
 import { getSubjectData } from "../../services/topicCatalog";
+import { filterSubjectsByUserAccess } from "../../services/accessControl";
 
 const fallbackScaleOptions = [
   { code: "equal", label: "Sama penting", ahpValue: 1, tfn: [1, 1, 1], reciprocal: [1, 1, 1] },
@@ -20,6 +22,159 @@ const fallbackScaleOptions = [
 
 const SAVED_WEIGHT_META_KEYS = ["__mode", "packages", "__savedAt", "__activity"];
 const formatWeightDisplay = (weight) => Number(weight || 0).toFixed(2);
+
+function ValidationSummaryCard({ validation, acknowledged, onAcknowledgedChange, onWarningClick, getWarningTargetLabel }) {
+  if (!validation?.summary) return null;
+  const rows = [
+    { ...validation.summary.reciprocalCheck, icon: "sync_alt" },
+    { ...validation.summary.saatyScaleCheck, icon: "straighten" },
+    { ...validation.summary.consistencyRatio, icon: "verified" },
+    { ...validation.summary.transitivityCheck, icon: "polyline" },
+    { ...validation.summary.pedagogicalWarning, icon: "school" },
+  ].filter(Boolean);
+  const rowTone = {
+    success: "border-emerald-200 bg-emerald-50/80 text-emerald-700",
+    warning: "border-amber-200 bg-amber-50/80 text-amber-700",
+    danger: "border-rose-200 bg-rose-50/80 text-rose-700",
+  };
+  const iconTone = {
+    success: "border-emerald-200 bg-emerald-50 text-emerald-600",
+    warning: "border-amber-200 bg-amber-50 text-amber-600",
+    danger: "border-rose-200 bg-rose-50 text-rose-600",
+  };
+  const requiresAcknowledgement = (validation.warnings || []).some((item) => item.requiresAcknowledgement);
+  const crRow = validation.summary.consistencyRatio || {};
+  const crValue = String(crRow.value || "-").match(/[\d.]+/)?.[0] || "-";
+  const crValid = crRow.severity !== "danger";
+
+  return (
+    <section className="space-y-7">
+      <div className={`rounded-[2rem] border p-7 shadow-sm ${
+        crValid ? "border-emerald-200 bg-emerald-50/70" : "border-rose-200 bg-rose-50/70"
+      }`}>
+        <div className="flex items-center justify-between gap-5">
+          <div className="flex min-w-0 items-center gap-5">
+            <span className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-white shadow-lg ${
+              crValid ? "bg-emerald-500 shadow-emerald-500/20" : "bg-rose-500 shadow-rose-500/20"
+            }`}>
+              <span className="material-symbols-outlined text-4xl">{crValid ? "verified" : "warning"}</span>
+            </span>
+            <div className="min-w-0">
+              <h3 className={`text-2xl font-black ${crValid ? "text-emerald-950" : "text-rose-950"}`}>
+                Consistency Ratio: {crValue}
+              </h3>
+              <p className={`mt-2 flex items-center gap-2 text-base font-bold ${crValid ? "text-emerald-700" : "text-rose-700"}`}>
+                <span className="material-symbols-outlined text-xl">{crValid ? "check_box" : "error"}</span>
+                {crValid ? "Model Konsisten & Siap Digunakan" : "Konsistensi rendah, silakan perbaiki Pairwise"}
+              </p>
+            </div>
+          </div>
+          <span className={`hidden h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 md:flex ${
+            crValid ? "border-emerald-300 text-emerald-500" : "border-rose-300 text-rose-500"
+          }`}>
+            <span className="material-symbols-outlined text-3xl">{crValid ? "check" : "priority_high"}</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="rounded-[2rem] border border-amber-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex items-start gap-5">
+            <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-700">
+              <span className="material-symbols-outlined text-4xl">checklist</span>
+            </span>
+            <div>
+              <h3 className="text-2xl font-black text-stone-950">Validation Summary</h3>
+              <p className="mt-2 max-w-md text-sm font-semibold leading-6 text-stone-500">
+                Hybrid lock untuk scale, reciprocal, CR, transitivity, dan pedagogical warning.
+              </p>
+            </div>
+          </div>
+          <span className={`self-start rounded-full border px-5 py-2 text-xs font-black uppercase tracking-widest ${
+            validation.canApplyWeight ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}>
+            {validation.canApplyWeight ? "Apply Ready" : "Apply Locked"}
+          </span>
+        </div>
+
+        <div className="mt-7 grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.95fr)]">
+          <div className="space-y-3">
+            {rows.map((row) => (
+              <div key={row.label} className={`flex items-center justify-between gap-4 rounded-2xl border px-4 py-4 ${rowTone[row.severity] || rowTone.warning}`}>
+                <div className="flex min-w-0 items-center gap-4">
+                  <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full border ${iconTone[row.severity] || iconTone.warning}`}>
+                    <span className="material-symbols-outlined text-2xl">{row.icon}</span>
+                  </span>
+                  <span className="min-w-0 text-base font-black text-stone-950">{row.label}</span>
+                </div>
+                <span className={`shrink-0 text-sm font-black ${row.severity === "success" ? "text-emerald-700" : row.severity === "danger" ? "text-rose-700" : "text-amber-700"}`}>
+                  {row.severity === "success" ? "OK" : "Review"} {row.value}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {(validation.warnings || []).length > 0 && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5">
+              <div className="flex items-center gap-4">
+                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-amber-200 bg-white/80 text-amber-600">
+                  <span className="material-symbols-outlined text-4xl">warning</span>
+                </span>
+                <h4 className="text-2xl font-black text-stone-950">Warnings & Review</h4>
+              </div>
+              <div className="mt-5 rounded-2xl border border-amber-300 bg-white/70 p-5">
+                <p className="flex items-center gap-3 text-sm font-black uppercase tracking-widest text-amber-700">
+                  <span className="material-symbols-outlined">warning</span>
+                  Warnings
+                </p>
+                <div className="mt-5 space-y-5">
+                  {validation.warnings.slice(0, 4).map((warning, index) => (
+                    <p key={`${warning.type}-${index}`} className="text-sm font-semibold leading-7 text-stone-700">
+                      <button
+                        type="button"
+                        onClick={() => onWarningClick?.(warning)}
+                        disabled={!onWarningClick}
+                        title={getWarningTargetLabel?.(warning) || "Buka pairwise terkait"}
+                        className="inline font-black text-stone-950 underline decoration-amber-300 decoration-2 underline-offset-4 transition hover:text-amber-700 disabled:cursor-default disabled:no-underline disabled:hover:text-stone-950"
+                      >
+                        {warning.title}:
+                      </button>{" "}
+                      {warning.message}
+                      {getWarningTargetLabel?.(warning) && (
+                        <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-700">
+                          {getWarningTargetLabel(warning)}
+                        </span>
+                      )}
+                    </p>
+                  ))}
+                </div>
+                {requiresAcknowledgement && (
+                  <label className="mt-6 flex items-start gap-3 border-t border-dashed border-amber-300 pt-5 text-sm font-semibold leading-6 text-stone-700">
+                    <input
+                      type="checkbox"
+                      checked={acknowledged}
+                      onChange={(event) => onAcknowledgedChange(event.target.checked)}
+                      className="mt-1 h-5 w-5 rounded border-amber-300 text-primary focus:ring-primary"
+                    />
+                    Saya sudah meninjau warning dan alasan pedagogisnya sebelum menyimpan sebagai draft atau menerapkan bobot.
+                  </label>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {!validation.canApplyWeight && (validation.errors || []).length > 0 && (
+          <p className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-bold text-rose-700">
+            <span className="material-symbols-outlined mr-2 align-middle text-2xl">error</span>
+            {validation.errors[0].message}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 const ResultHoverCard = ({ item, mode }) => {
   if (!item) {
     return (
@@ -105,14 +260,20 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
   const [scaleSaving, setScaleSaving] = useState(false);
   const [scaleStatus, setScaleStatus] = useState("");
   const [backendError, setBackendError] = useState("");
+  const [validationAcknowledged, setValidationAcknowledged] = useState(false);
+  const [pairwiseFocus, setPairwiseFocus] = useState(null);
 
   useEffect(() => {
-    getTopics()
-      .then((subjects) => {
-        setSubjectData(subjects || []);
-        const firstSubject = subjects?.[0];
-        setSelectedSubjectId((current) => current || firstSubject?.id || "");
-        setSelectedTopicId((current) => current || firstSubject?.topics?.[0]?.id || "");
+    Promise.all([getTopics(), getCurrentUser()])
+      .then(([subjects, user]) => {
+        const accessibleSubjects = filterSubjectsByUserAccess(subjects || [], user);
+        setSubjectData(accessibleSubjects);
+        const firstSubject = accessibleSubjects?.[0];
+        setSelectedSubjectId((current) => accessibleSubjects.some((subject) => subject.id === current) ? current : firstSubject?.id || "");
+        setSelectedTopicId((current) => {
+          const availableTopics = accessibleSubjects.flatMap((subject) => subject.topics || []);
+          return availableTopics.some((topic) => topic.id === current) ? current : firstSubject?.topics?.[0]?.id || "";
+        });
         setBackendError("");
       })
       .catch((error) => {
@@ -180,6 +341,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
       };
     }));
     setScaleStatus("Scale berubah. Simpan scale lalu hitung ulang bobot.");
+    setValidationAcknowledged(false);
     setResult(null);
   };
 
@@ -226,7 +388,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
   };
 
   const calculateResult = async () => {
-    if (!selectedTopicId || rubricPackages.length === 0 || scaleDirty || scaleInvalid) return;
+    if (!selectedTopicId || rubricPackages.length === 0 || scaleDirty || scaleInvalid || filledPairCount < totalPairCount) return;
     setCalculatingWeights(true);
     setBackendError("");
     try {
@@ -239,6 +401,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
         { persist: false }
       );
       setResult(apiResult);
+      setValidationAcknowledged(false);
       setResultHover(null);
       setStep(3);
     } catch (error) {
@@ -249,7 +412,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
   };
 
   const handleSaveToSystem = async () => {
-    if (!result || !result.weights) return;
+    if (!result || !result.weights || !canApplyWeight) return;
 
     const selectedSubject = subjectData.find((subject) => subject.id === selectedSubjectId);
     const selectedTopic = selectedSubject?.topics.find((topic) => topic.id === selectedTopicId);
@@ -272,6 +435,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
         packages: buildPackagePayload(),
         savedAt,
         activity: savedActivity,
+        validationAcknowledged,
       });
       setResult(apiResult);
       setResultHover(null);
@@ -302,11 +466,77 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
       return acc;
     }, {});
 
+  const findWarningPairwiseTarget = (warning) => {
+    const criteria = (warning?.relatedCriteria || []).filter(Boolean);
+    if (criteria.length === 0) return null;
+
+    const candidatePairs = [];
+    for (let leftIndex = 0; leftIndex < criteria.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < criteria.length; rightIndex += 1) {
+        candidatePairs.push([criteria[leftIndex], criteria[rightIndex]]);
+      }
+    }
+
+    const matchesPair = ([left, right], [targetLeft, targetRight]) =>
+      (left === targetLeft && right === targetRight) || (left === targetRight && right === targetLeft);
+
+    for (const pkg of rubricPackages) {
+      const pairs = packagePairs[pkg.key] || [];
+      for (const candidatePair of candidatePairs) {
+        const pairIndex = pairs.findIndex((pair) => matchesPair(pair, candidatePair));
+        if (pairIndex >= 0) {
+          const [left, right] = pairs[pairIndex];
+          return { packageKey: pkg.key, packageTitle: pkg.title, pairIndex, left, right };
+        }
+      }
+    }
+
+    for (const pkg of rubricPackages) {
+      const pairs = packagePairs[pkg.key] || [];
+      const pairIndex = pairs.findIndex(([left, right]) => criteria.includes(left) || criteria.includes(right));
+      if (pairIndex >= 0) {
+        const [left, right] = pairs[pairIndex];
+        return { packageKey: pkg.key, packageTitle: pkg.title, pairIndex, left, right };
+      }
+    }
+
+    return null;
+  };
+
+  const getWarningTargetLabel = (warning) => {
+    const target = findWarningPairwiseTarget(warning);
+    return target ? `Buka: ${target.left} vs ${target.right}` : "";
+  };
+
+  const openWarningPairwiseTarget = (warning) => {
+    const target = findWarningPairwiseTarget(warning);
+    if (!target) return;
+    const nextFocus = { ...target, token: Date.now() };
+    setPairwiseFocus(nextFocus);
+    setStep(2);
+    window.setTimeout(() => {
+      document.getElementById(`pairwise-${target.packageKey}-${target.pairIndex}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 120);
+  };
+
   const totalPairCount = Object.values(packagePairs).reduce((acc, pairs) => acc + pairs.length, 0);
   const filledPairCount = Object.values(pairwise).reduce(
     (acc, packagePairwise) => acc + Object.keys(packagePairwise || {}).length,
     0
   );
+  const pairwiseComplete = totalPairCount > 0 && filledPairCount >= totalPairCount;
+  const validationResult = result?.validation || null;
+  const validationNeedsAcknowledgement = (validationResult?.warnings || []).some((warning) => warning.requiresAcknowledgement);
+  const hardValidationPassed = Boolean(
+    validationResult &&
+    validationResult.summary?.reciprocalCheck?.severity !== "danger" &&
+    validationResult.summary?.saatyScaleCheck?.severity !== "danger" &&
+    validationResult.summary?.consistencyRatio?.severity !== "danger"
+  );
+  const canApplyWeight = Boolean(validationResult?.canApplyWeight || (hardValidationPassed && (!validationNeedsAcknowledgement || validationAcknowledged)));
   const savedPackages = savedTopicWeights.packages || {};
   const recentSavedActivities = savedTopicWeights.__activity ? [savedTopicWeights.__activity] : [];
   const hasSavedWeight = Boolean(contextFlow?.hasSavedWeight);
@@ -375,6 +605,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
           setScaleOptions(nextScaleOptions);
           setScaleDraft(nextScaleOptions);
           setScaleStatus("");
+          setValidationAcknowledged(false);
           setBackendError("");
         }
       })
@@ -389,6 +620,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
           setScaleOptions(fallbackScaleOptions);
           setScaleDraft(fallbackScaleOptions);
           setScaleStatus("");
+          setValidationAcknowledged(false);
         }
       });
     return () => {
@@ -644,7 +876,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
               <div className="mb-8">
                 <div className="flex items-center gap-2 text-primary">
                   <span className="material-symbols-outlined">psychology</span>
-                  <h2 className="text-xl font-black text-stone-900 uppercase tracking-tight">Expert Configuration — Fuzzy AHP</h2>
+                  <h2 className="text-xl font-black text-stone-900 uppercase tracking-tight">Expert Configuration â€” Fuzzy AHP</h2>
                 </div>
                 <p className="mt-2 text-sm text-stone-500 italic">Bobot akan disimpan khusus untuk topik dan mata pelajaran ini guna menjaga relevansi penilaian.</p>
               </div>
@@ -827,7 +1059,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                                   step="0.01"
                                   value={value}
                                   onChange={(event) => updateScaleDraftValue(option.code, index, event.target.value)}
-                                  className="h-10 w-20 rounded-xl border border-stone-200 bg-white px-2 text-center text-xs font-black text-stone-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
+                                  className="h-10 w-20 rounded-xl border border-stone-200 bg-white px-2 text-center text-xs font-black text-stone-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 disabled:bg-stone-100 disabled:text-stone-400"
                                 />
                               </td>
                             ))}
@@ -867,8 +1099,18 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     </div>
 
                     <div className="space-y-10">
-                      {(packagePairs[pkg.key] || []).map(([c1, c2], idx) => (
-                  <div key={`${pkg.key}-${idx}`} className="relative flex flex-col items-center">
+                      {(packagePairs[pkg.key] || []).map(([c1, c2], idx) => {
+                        const isFocusedPair = pairwiseFocus?.packageKey === pkg.key && pairwiseFocus?.pairIndex === idx;
+                        return (
+                  <div
+                    id={`pairwise-${pkg.key}-${idx}`}
+                    key={`${pkg.key}-${idx}`}
+                    className={`relative flex scroll-mt-8 flex-col items-center rounded-[2rem] border-2 p-4 transition-all ${
+                      isFocusedPair
+                        ? "border-amber-300 bg-amber-50 shadow-xl shadow-amber-100"
+                        : "border-transparent"
+                    }`}
+                  >
                     <div className="mb-8 flex w-full items-center justify-between px-8">
                       <div className="text-center w-1/3">
                         <span className="block text-[10px] font-black uppercase text-stone-400 mb-2 tracking-tighter">Subskill A</span>
@@ -899,7 +1141,9 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                                   [idx]: { left: c1, right: c2, scale: opt.label },
                                 },
                               });
+                              setValidationAcknowledged(false);
                               setResult(null);
+                              if (isFocusedPair) setPairwiseFocus(null);
                             }}
                             className={`group relative flex flex-col items-center rounded-[2rem] border-2 p-5 transition-all duration-300 ${
                               isActive
@@ -910,7 +1154,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                             <div className={`mb-3 flex h-8 w-8 items-center justify-center rounded-full transition-all ${
                               isActive ? "bg-primary text-white" : "bg-stone-100 text-stone-400"
                             }`}>
-                              <span className="text-xs font-black">{isActive ? "✓" : ""}</span>
+                              <span className="text-xs font-black">{isActive ? "âœ“" : ""}</span>
                             </div>
                             <p className={`text-center text-[11px] font-black uppercase leading-tight tracking-tighter ${isActive ? "text-primary" : "text-stone-500"}`}>
                               {opt.label}
@@ -920,7 +1164,8 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                       })}
                     </div>
                   </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </section>
                 ))}
@@ -1142,18 +1387,13 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                   </div>
                 </section>
 
-                <section className={`rounded-[2rem] border p-6 ${
-                  consistency < 0.1 ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"
-                }`}>
-                  <p className={`text-sm font-black ${consistency < 0.1 ? "text-emerald-800" : "text-amber-800"}`}>
-                    Consistency Ratio (CR): {consistency.toFixed(2)}
-                  </p>
-                  <p className={`mt-1 text-sm font-semibold ${consistency < 0.1 ? "text-emerald-700" : "text-amber-700"}`}>
-                    {consistency < 0.1
-                      ? "Pairwise cukup konsisten untuk digunakan sebagai bobot importance."
-                      : "Pairwise perlu ditinjau ulang karena tingkat konsistensi belum ideal."}
-                  </p>
-                </section>
+                <ValidationSummaryCard
+                  validation={validationResult}
+                  acknowledged={validationAcknowledged}
+                  onAcknowledgedChange={setValidationAcknowledged}
+                  onWarningClick={openWarningPairwiseTarget}
+                  getWarningTargetLabel={getWarningTargetLabel}
+                />
               </div>
             );
           })()}
@@ -1562,28 +1802,6 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                 </div>
               </div>
 
-              <div className={`rounded-3xl border-2 p-6 flex items-center justify-between transition-all ${
-                result.consistency < 0.1 ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"
-              }`}>
-                <div className="flex items-center gap-4">
-                  <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
-                    result.consistency < 0.1 ? "bg-emerald-500 text-white" : "bg-rose-500 text-white"
-                  }`}>
-                    <span className="material-symbols-outlined">{result.consistency < 0.1 ? "verified" : "warning"}</span>
-                  </div>
-                  <div>
-                    <h4 className={`text-lg font-black ${result.consistency < 0.1 ? "text-emerald-900" : "text-rose-900"}`}>
-                      Consistency Ratio: {result.consistency}
-                    </h4>
-                    <p className={`text-sm font-bold ${result.consistency < 0.1 ? "text-emerald-600" : "text-rose-600"}`}>
-                      {result.consistency < 0.1 ? "✅ Model Konsisten & Siap Digunakan" : "⚠️ Konsistensi rendah, silakan perbaiki Pairwise"}
-                    </p>
-                  </div>
-                </div>
-                {result.consistency < 0.1 && (
-                  <span className="material-symbols-outlined text-4xl text-emerald-300">check_circle</span>
-                )}
-              </div>
             </div>
           )}
         </div>
@@ -1601,7 +1819,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
           {step === 2 ? (
             <button
               onClick={calculateResult}
-              disabled={calculatingWeights || rubricPackages.length === 0 || scaleDirty || scaleInvalid}
+              disabled={calculatingWeights || rubricPackages.length === 0 || scaleDirty || scaleInvalid || !pairwiseComplete}
               className="flex items-center gap-2 rounded-2xl bg-stone-950 px-8 py-3 text-sm font-black text-white shadow-xl shadow-stone-950/20 transition-all hover:bg-stone-800 hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <span className="material-symbols-outlined text-lg">{calculatingWeights ? "hourglass_top" : "calculate"}</span>
@@ -1617,7 +1835,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
           ) : (
             <button 
               onClick={handleSaveToSystem}
-              disabled={savingWeights}
+              disabled={savingWeights || !canApplyWeight}
               className="flex items-center gap-2 rounded-2xl bg-primary px-8 py-3 text-sm font-black text-white shadow-xl shadow-primary/20 transition-all hover:bg-secondary hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span className="material-symbols-outlined text-lg">{savingWeights ? "hourglass_top" : "save"}</span>

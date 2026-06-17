@@ -245,6 +245,15 @@ export const createClass = async (payload) => {
   return data.class || null;
 };
 
+export const importClassStudents = async ({ file, classCode = "", displayName = "", level = "Primary" }) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (classCode) formData.append("classCode", classCode);
+  if (displayName) formData.append("displayName", displayName);
+  if (level) formData.append("level", level);
+  return unwrap(await api.post("classes/import-students/", formData));
+};
+
 export const getUsers = async () => {
   const data = unwrap(await api.get("users/"));
   return data.users || [];
@@ -559,6 +568,7 @@ export const saveContextWeights = async (contextId, payload = {}) => {
       packages: payload.packages || {},
       savedAt,
       activity: payload.activity || {},
+      validationAcknowledged: Boolean(payload.validationAcknowledged),
     },
   }));
   const cachedWeights = normalizeWeightPayload(data);

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { dummyATL, saveATLData } from "../dummyData/dummyATL";
-import { createContext, createCriterion, deleteCriterion, deleteTopic, getATLHierarchy, getCriteria, getTopics, updateCriterion } from "../../services/atlApi";
+import { createContext, createCriterion, deleteCriterion, deleteTopic, getATLHierarchy, getCriteria, getTopics, updateCriterion, getCurrentUser } from "../../services/atlApi";
+import { filterSubjectsByUserAccess } from "../../services/accessControl";
 import { getATLCategoryMeta, getSubskillMeta } from "../../services/labelRegistry";
 import { createCustomSubtopicDraft, getSubjectData, saveCustomSubtopic } from "../../services/topicCatalog";
 
@@ -22,14 +23,15 @@ export default function CriteriaManagement() {
     math: { icon: "calculate", bgColor: "bg-amber-50", borderColor: "border-amber-200", textColor: "text-amber-700", badgeColor: "bg-amber-100 text-amber-700", accentBorder: "border-amber-300" },
   };
 
-  const buildSubjects = () =>
-    getSubjectData().map((subject) => ({
+  const buildSubjects = (user = currentUser) =>
+    filterSubjectsByUserAccess(getSubjectData(), user).map((subject) => ({
       ...subject,
       ...(subjectStyles[subject.id] || subjectStyles.singing),
     }));
 
   // State management
-  const [subjects, setSubjects] = useState(buildSubjects);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [subjects, setSubjects] = useState(() => buildSubjects(null));
   const [selectedSubject, setSelectedSubject] = useState("singing");
   const [selectedSubtopic, setSelectedSubtopic] = useState("singing_christmas_carol");
   const [showAddForm, setShowAddForm] = useState(false);
@@ -176,7 +178,7 @@ export default function CriteriaManagement() {
 
   const refreshSelectedSubtopicFromBackend = async (topicId = selectedSubtopic) => {
     await getTopics();
-    const nextSubjects = buildSubjects();
+    const nextSubjects = buildSubjects(currentUser);
     setSubjects(nextSubjects);
     if (topicId) {
       const criteria = await getCriteria(topicId);
@@ -189,15 +191,16 @@ export default function CriteriaManagement() {
   };
 
   useEffect(() => {
-    const syncTopics = () => setSubjects(buildSubjects());
+    const syncTopics = () => setSubjects(buildSubjects(currentUser));
     window.addEventListener("atl-topics-updated", syncTopics);
     return () => window.removeEventListener("atl-topics-updated", syncTopics);
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
-    getTopics()
-      .then(() => {
-        const nextSubjects = buildSubjects();
+    Promise.all([getTopics(), getCurrentUser()])
+      .then(([, user]) => {
+        setCurrentUser(user);
+        const nextSubjects = buildSubjects(user);
         setSubjects(nextSubjects);
         const topicIds = nextSubjects.flatMap((subject) => (subject.topics || []).map((topic) => topic.id));
         if (!topicIds.includes(selectedSubtopic)) {
@@ -222,7 +225,7 @@ export default function CriteriaManagement() {
     const created = createCustomSubtopicDraft(selectedSubject, newSubtopicName, newSubtopicDescription);
     if (!created) return;
 
-    const currentSubjects = buildSubjects();
+    const currentSubjects = buildSubjects(currentUser);
     const subject = currentSubjects.find((item) => item.id === selectedSubject);
     const backendContext = await createContext({
       grade: "Grade 3",
@@ -237,12 +240,12 @@ export default function CriteriaManagement() {
     }
 
     saveCustomSubtopic(selectedSubject, created);
-    const nextSubjects = buildSubjects();
+    const nextSubjects = buildSubjects(currentUser);
     setSubjects(nextSubjects);
     dummyATL[created.id] = dummyATL[created.id] || [];
     persistATLChanges();
     await getTopics();
-    setSubjects(buildSubjects());
+    setSubjects(buildSubjects(currentUser));
 
     setSelectedSubtopic(created.id);
     setNewSubtopicName("");
@@ -272,7 +275,7 @@ export default function CriteriaManagement() {
 
     try {
       await getTopics();
-      const nextSubjects = buildSubjects();
+      const nextSubjects = buildSubjects(currentUser);
       const nextSubject =
         nextSubjects.find((subject) => subject.id === selectedSubject && subject.topics?.length > 0)
         || nextSubjects.find((subject) => subject.topics?.length > 0)

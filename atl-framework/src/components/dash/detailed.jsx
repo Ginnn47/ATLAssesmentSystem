@@ -8,6 +8,7 @@ import {
   getAssessmentDraft,
   getAssessmentFilterState,
   getClasses,
+  getCurrentUser,
   getReport,
   getStudents,
   getTopics,
@@ -18,6 +19,7 @@ import {
   saveAssessmentFilterState,
   updateAssessmentLiveDraft,
 } from "../../services/atlApi";
+import { filterSubjectsByUserAccess, subjectDisplayName } from "../../services/accessControl";
 import { getATLCategoryMeta, getRatingMeta, getScoreLevel, getSubjectMeta, hydrateLabelRegistry, ratingOptions } from "../../services/labelRegistry";
 import { getTopicsForSubjectLabel } from "../../services/topicCatalog";
 
@@ -75,6 +77,7 @@ export default function DetailedInputATL() {
   const [classOptions, setClassOptions] = useState([]);
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedSubject, setSelectedSubject] = useState("Singing");
+  const [subjectOptions, setSubjectOptions] = useState(["Singing", "IPA", "Math"]);
   const [selectedTopicIndex, setSelectedTopicIndex] = useState(0);
   const [apiStudents, setApiStudents] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState(null);
@@ -186,13 +189,23 @@ export default function DetailedInputATL() {
 
   useEffect(() => {
     hydrateLabelRegistry().then(() => setDataVersion((version) => version + 1));
-    Promise.allSettled([getClasses(), getTopics()])
-      .then(([classesResult, topicsResult]) => {
+    Promise.allSettled([getClasses(), getTopics(), getCurrentUser()])
+      .then(([classesResult, topicsResult, userResult]) => {
         const classes = classesResult.status === "fulfilled" ? classesResult.value : [];
         const labels = classes.map((item) => item.displayName || item.display_name || item.code).filter(Boolean);
         if (labels.length > 0) {
           setClassOptions(labels);
           setSelectedClass((current) => current || labels[0] || "");
+        }
+        if (topicsResult.status === "fulfilled") {
+          const user = userResult.status === "fulfilled" ? userResult.value : null;
+          const options = filterSubjectsByUserAccess(topicsResult.value || [], user)
+            .map(subjectDisplayName)
+            .filter(Boolean);
+          if (options.length > 0) {
+            setSubjectOptions(options);
+            setSelectedSubject((current) => (options.includes(current) ? current : options[0]));
+          }
         }
         setTopicVersion((version) => version + 1);
         if (classesResult.status === "rejected" || topicsResult.status === "rejected") {
@@ -245,6 +258,12 @@ export default function DetailedInputATL() {
       window.removeEventListener("atl-topics-updated", syncTopics);
     };
   }, []);
+
+  useEffect(() => {
+    if (subjectOptions.length > 0 && !subjectOptions.includes(selectedSubject)) {
+      setSelectedSubject(subjectOptions[0]);
+    }
+  }, [selectedSubject, subjectOptions]);
 
   useEffect(() => {
     if (skipSubjectResetRef.current) {
@@ -730,7 +749,7 @@ export default function DetailedInputATL() {
               </select>
               <label className="block text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Mata Pelajaran</label>
               <select value={selectedSubject} onChange={(e) => handleSubjectChange(e.target.value)} className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-black text-red-600">
-                {["Singing", "IPA", "Math"].map((item) => <option key={item}>{item}</option>)}
+                {subjectOptions.map((item) => <option key={item}>{item}</option>)}
               </select>
             </div>
             <div>
