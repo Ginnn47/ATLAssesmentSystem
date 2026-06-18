@@ -8,6 +8,7 @@ import {
   saveContextWeights,
   updateContextPairwiseScale,
 } from "../../services/atlApi";
+import { dummyATL } from "../dummyData/dummyATL";
 import { getSubskillColorHex, getSubskillMeta } from "../../services/labelRegistry";
 import { getSubjectData } from "../../services/topicCatalog";
 import { filterSubjectsByUserAccess } from "../../services/accessControl";
@@ -22,6 +23,54 @@ const fallbackScaleOptions = [
 
 const SAVED_WEIGHT_META_KEYS = ["__mode", "packages", "__savedAt", "__activity"];
 const formatWeightDisplay = (weight) => Number(weight || 0).toFixed(2);
+
+const buildPairs = (items = []) => {
+  const pairs = [];
+  for (let leftIndex = 0; leftIndex < items.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < items.length; rightIndex += 1) {
+      pairs.push({ left: items[leftIndex], right: items[rightIndex] });
+    }
+  }
+  return pairs;
+};
+
+const buildFallbackContextFlow = (topicId) => {
+  const criteria = dummyATL[topicId] || [];
+  const savedWeights = dummyATL.savedWeights?.[topicId] || {};
+  const packages = Object.fromEntries(criteria.map((criterion, index) => {
+    const subskills = Array.from(new Set(criterion.atl || []));
+    const savedPackage = Object.values(savedWeights.packages || {}).find((item) => item.title === criterion.kriteria);
+    const key = savedPackage?.key || `fallback-${criterion.id || index}`;
+    return [key, {
+      key,
+      rubricItemId: criterion.id || key,
+      title: criterion.kriteria,
+      criteriaTopic: criterion.criteriaTopic || "Rubric Evidence",
+      categories: criterion.atlCategories || [],
+      subskills,
+      pairs: buildPairs(subskills),
+      pairwise: savedPackage?.pairwiseTrace || savedPackage?.pairwise || [],
+    }];
+  }));
+
+  return {
+    weightingPackages: packages,
+    weights: savedWeights,
+    hasSavedWeight: Object.keys(savedWeights || {}).length > 0,
+    weightSource: "cached",
+    scaleOptions: savedWeights.scaleOptions || fallbackScaleOptions,
+  };
+};
+
+const pairwiseFromFlow = (flow) => {
+  const nextPairwise = {};
+  Object.values(flow?.weightingPackages || {}).forEach((pkg) => {
+    nextPairwise[pkg.key || `rubric-${pkg.rubricItemId}`] = Object.fromEntries(
+      (pkg.pairwise || []).map((item, index) => [index, item])
+    );
+  });
+  return nextPairwise;
+};
 
 function ValidationSummaryCard({ validation, acknowledged, onAcknowledgedChange, onWarningClick, getWarningTargetLabel }) {
   if (!validation?.summary) return null;
@@ -264,9 +313,11 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
   const [pairwiseFocus, setPairwiseFocus] = useState(null);
 
   useEffect(() => {
-    Promise.all([getTopics(), getCurrentUser()])
-      .then(([subjects, user]) => {
-        const accessibleSubjects = filterSubjectsByUserAccess(subjects || [], user);
+    Promise.allSettled([getTopics(), getCurrentUser()])
+      .then(([topicsResult, userResult]) => {
+        const subjects = topicsResult.status === "fulfilled" ? topicsResult.value : getSubjectData();
+        const user = userResult.status === "fulfilled" ? userResult.value : null;
+        const accessibleSubjects = filterSubjectsByUserAccess(subjects || getSubjectData(), user);
         setSubjectData(accessibleSubjects);
         const firstSubject = accessibleSubjects?.[0];
         setSelectedSubjectId((current) => accessibleSubjects.some((subject) => subject.id === current) ? current : firstSubject?.id || "");
@@ -274,11 +325,11 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
           const availableTopics = accessibleSubjects.flatMap((subject) => subject.topics || []);
           return availableTopics.some((topic) => topic.id === current) ? current : firstSubject?.topics?.[0]?.id || "";
         });
-        setBackendError("");
-      })
-      .catch((error) => {
-        setSubjectData([]);
-        setBackendError(error.message || "Gagal mengambil topik dari backend.");
+        if (topicsResult.status === "rejected") {
+          setBackendError("Backend belum tersambung. Menampilkan data terakhir.");
+        } else {
+          setBackendError("");
+        }
       });
   }, []);
 
@@ -449,9 +500,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
     }
   };
 
-  const rubricPackages = backendError
-    ? []
-    : Object.values(contextFlow?.weightingPackages || {}).map((item) => ({
+  const rubricPackages = Object.values(contextFlow?.weightingPackages || {}).map((item) => ({
       key: item.key || `rubric-${item.rubricItemId}`,
       rubricItemId: item.rubricItemId,
       title: item.title,
@@ -590,12 +639,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
     getContextFlow(selectedTopicId)
       .then((flow) => {
         if (!cancelled) {
-          const nextPairwise = {};
-          Object.values(flow?.weightingPackages || {}).forEach((pkg) => {
-            nextPairwise[pkg.key || `rubric-${pkg.rubricItemId}`] = Object.fromEntries(
-              (pkg.pairwise || []).map((item, index) => [index, item])
-            );
-          });
+          const nextPairwise = pairwiseFromFlow(flow);
           setResult(null);
           setResultHover(null);
           setContextFlow(flow);
@@ -611,12 +655,16 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
       })
       .catch((error) => {
         if (!cancelled) {
+          const fallbackFlow = buildFallbackContextFlow(selectedTopicId);
+          const hasFallbackPackages = Object.keys(fallbackFlow.weightingPackages || {}).length > 0;
           setResult(null);
           setResultHover(null);
-          setBackendError(error.message || "Gagal mengambil rubrik/bobot dari backend.");
-          setContextFlow(null);
-          setSavedTopicWeights({});
-          setPairwise({});
+          setBackendError(hasFallbackPackages
+            ? "Backend belum tersambung. Menampilkan data terakhir."
+            : (error.message || "Gagal mengambil rubrik/bobot dari backend."));
+          setContextFlow(hasFallbackPackages ? fallbackFlow : null);
+          setSavedTopicWeights(hasFallbackPackages ? fallbackFlow.weights || {} : {});
+          setPairwise(hasFallbackPackages ? pairwiseFromFlow(fallbackFlow) : {});
           setScaleOptions(fallbackScaleOptions);
           setScaleDraft(fallbackScaleOptions);
           setScaleStatus("");
@@ -865,9 +913,9 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
       <div className="flex flex-1 flex-col justify-between overflow-hidden py-2">
         <div className="flex-1 overflow-y-auto pr-4">
           {backendError && (
-            <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
-              <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
-              {backendError} Importance Weighting tidak memakai dummy/localStorage sebagai pengganti data.
+            <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-800">
+              <span className="material-symbols-outlined mr-2 align-middle text-[18px]">sync_problem</span>
+              {backendError}
             </div>
           )}
           {/* STEP 1: CONTEXT + CRITERIA */}
@@ -876,7 +924,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
               <div className="mb-8">
                 <div className="flex items-center gap-2 text-primary">
                   <span className="material-symbols-outlined">psychology</span>
-                  <h2 className="text-xl font-black text-stone-900 uppercase tracking-tight">Expert Configuration â€” Fuzzy AHP</h2>
+                  <h2 className="text-xl font-black text-stone-900 uppercase tracking-tight">Expert Configuration - Fuzzy AHP</h2>
                 </div>
                 <p className="mt-2 text-sm text-stone-500 italic">Bobot akan disimpan khusus untuk topik dan mata pelajaran ini guna menjaga relevansi penilaian.</p>
               </div>
@@ -1154,7 +1202,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                             <div className={`mb-3 flex h-8 w-8 items-center justify-center rounded-full transition-all ${
                               isActive ? "bg-primary text-white" : "bg-stone-100 text-stone-400"
                             }`}>
-                              <span className="text-xs font-black">{isActive ? "âœ“" : ""}</span>
+                              {isActive && <span className="material-symbols-outlined text-[16px]">check</span>}
                             </div>
                             <p className={`text-center text-[11px] font-black uppercase leading-tight tracking-tighter ${isActive ? "text-primary" : "text-stone-500"}`}>
                               {opt.label}

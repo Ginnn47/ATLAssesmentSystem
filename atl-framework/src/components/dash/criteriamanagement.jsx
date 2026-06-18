@@ -64,7 +64,7 @@ export default function CriteriaManagement() {
   });
 
   // Get current criteria list
-  const currentCriteria = backendError ? [] : dummyATL[selectedSubtopic] || [];
+  const currentCriteria = dummyATL[selectedSubtopic] || [];
 
   // Get current subject config
   const currentSubjectConfig = subjects.find((s) => s.id === selectedSubject);
@@ -197,8 +197,9 @@ export default function CriteriaManagement() {
   }, [currentUser]);
 
   useEffect(() => {
-    Promise.all([getTopics(), getCurrentUser()])
-      .then(([, user]) => {
+    Promise.allSettled([getTopics(), getCurrentUser()])
+      .then(([topicsResult, userResult]) => {
+        const user = userResult.status === "fulfilled" ? userResult.value : null;
         setCurrentUser(user);
         const nextSubjects = buildSubjects(user);
         setSubjects(nextSubjects);
@@ -208,11 +209,11 @@ export default function CriteriaManagement() {
           setSelectedSubject(firstSubject?.id || "");
           setSelectedSubtopic(firstSubject?.topics?.[0]?.id || "");
         }
-        setBackendError("");
-      })
-      .catch((error) => {
-        setSubjects([]);
-        setBackendError(error.message || "Gagal mengambil topik dari backend.");
+        if (topicsResult.status === "rejected") {
+          setBackendError("Backend belum tersambung. Menampilkan data terakhir.");
+        } else {
+          setBackendError("");
+        }
       });
   }, []);
 
@@ -318,8 +319,7 @@ export default function CriteriaManagement() {
       })
       .catch((error) => {
         if (cancelled) return;
-        setAtlHierarchy([]);
-        setBackendError(error.message || "Gagal mengambil rubrik/hierarki ATL dari backend.");
+        setBackendError(error.message || "Backend belum tersambung. Menampilkan data terakhir.");
         setDataVersion((v) => v + 1);
       });
     return () => {
@@ -590,9 +590,9 @@ export default function CriteriaManagement() {
   return (
     <div className="space-y-8">
       {backendError && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
-          <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
-          {backendError} Context Setup tidak memakai dummy/localStorage sebagai pengganti data.
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-800">
+          <span className="material-symbols-outlined mr-2 align-middle text-[18px]">sync_problem</span>
+          {backendError}
         </div>
       )}
 

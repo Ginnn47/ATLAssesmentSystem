@@ -67,9 +67,10 @@ function App() {
         <Route path="/input-atl" element={<ProtectedRoute roles={[ROLE_CODES.EVALUATOR]}><DetailedInputATL /></ProtectedRoute>} />
         <Route path="/input-atl/batch" element={<ProtectedRoute roles={[ROLE_CODES.EVALUATOR]}><BatchInputATL /></ProtectedRoute>} />
         <Route path="/reports" element={<ProtectedRoute roles={[ROLE_CODES.SUBJECT_COORDINATOR]}><Report /></ProtectedRoute>} />
-        <Route path="/settings/users" element={<ProtectedRoute roles={[ROLE_CODES.ADMIN]}><ManageUser /></ProtectedRoute>} />
-        <Route path="/atl/manage" element={<ProtectedRoute roles={[ROLE_CODES.ATL_EXPERT]}><ATLmanage /></ProtectedRoute>} />
-        <Route path="/atl/weight" element={<ProtectedRoute roles={[ROLE_CODES.ATL_EXPERT]}><ATLmanage initialTab="settings" /></ProtectedRoute>} />
+        <Route path="/academic/manage" element={<ProtectedRoute roles={[ROLE_CODES.ADMIN]}><ManageUser /></ProtectedRoute>} />
+        <Route path="/settings/users" element={<Navigate to="/academic/manage" replace />} />
+        <Route path="/atl/manage" element={<ProtectedRoute roles={[ROLE_CODES.ATL_EXPERT]}><ATLmanage page="criteria" /></ProtectedRoute>} />
+        <Route path="/atl/weight" element={<ProtectedRoute roles={[ROLE_CODES.ATL_EXPERT]}><ATLmanage page="weight" /></ProtectedRoute>} />
         <Route path="/unauthorized" element={<Unauthorized />} />
       </Routes>
     </BrowserRouter>

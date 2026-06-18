@@ -87,13 +87,22 @@ const normalizeSubject = (subject) => {
 };
 
 export const setSubjectData = (subjects = []) => {
-  subjectCatalogCache = Array.isArray(subjects) ? subjects.map(normalizeSubject) : [];
-  if (subjectCatalogCache.length > 0) writeCachedSubjects(subjectCatalogCache);
+  if (Array.isArray(subjects) && subjects.length > 0) {
+    subjectCatalogCache = subjects.map(normalizeSubject);
+    writeCachedSubjects(subjectCatalogCache);
+  } else if (subjectCatalogCache.length === 0) {
+    subjectCatalogCache = baseSubjectCatalog.map(normalizeSubject);
+  }
   if (typeof window !== "undefined") window.dispatchEvent(new Event("atl-topics-updated"));
   return subjectCatalogCache;
 };
 
-export const getSubjectData = () => subjectCatalogCache;
+export const getSubjectData = () => {
+  if (subjectCatalogCache.length === 0) {
+    subjectCatalogCache = baseSubjectCatalog.map(normalizeSubject);
+  }
+  return subjectCatalogCache;
+};
 
 export const getSubjectTopicMapByLabel = () =>
   getSubjectData().reduce((acc, subject) => {

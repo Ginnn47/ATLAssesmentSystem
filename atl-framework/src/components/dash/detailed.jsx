@@ -21,7 +21,7 @@ import {
 } from "../../services/atlApi";
 import { filterSubjectsByUserAccess, subjectDisplayName } from "../../services/accessControl";
 import { getATLCategoryMeta, getRatingMeta, getScoreLevel, getSubjectMeta, hydrateLabelRegistry, ratingOptions } from "../../services/labelRegistry";
-import { getTopicsForSubjectLabel } from "../../services/topicCatalog";
+import { getSubjectData, getTopicsForSubjectLabel } from "../../services/topicCatalog";
 
 const normalizeRatingLabel = (label) =>
   label === "Need Improvement" ? "Need Further Improvement" : label;
@@ -74,10 +74,11 @@ const getCategoryExportValue = (student, categoryName) => {
 };
 
 export default function DetailedInputATL() {
+  const initialSubjectOptions = getSubjectData().map(subjectDisplayName).filter(Boolean);
   const [classOptions, setClassOptions] = useState([]);
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedSubject, setSelectedSubject] = useState("Singing");
-  const [subjectOptions, setSubjectOptions] = useState(["Singing", "IPA", "Math"]);
+  const [subjectOptions, setSubjectOptions] = useState(initialSubjectOptions.length > 0 ? initialSubjectOptions : ["Singing", "IPA", "Math"]);
   const [selectedTopicIndex, setSelectedTopicIndex] = useState(0);
   const [apiStudents, setApiStudents] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState(null);
@@ -197,15 +198,14 @@ export default function DetailedInputATL() {
           setClassOptions(labels);
           setSelectedClass((current) => current || labels[0] || "");
         }
-        if (topicsResult.status === "fulfilled") {
-          const user = userResult.status === "fulfilled" ? userResult.value : null;
-          const options = filterSubjectsByUserAccess(topicsResult.value || [], user)
-            .map(subjectDisplayName)
-            .filter(Boolean);
-          if (options.length > 0) {
-            setSubjectOptions(options);
-            setSelectedSubject((current) => (options.includes(current) ? current : options[0]));
-          }
+        const topicSubjects = topicsResult.status === "fulfilled" ? topicsResult.value : getSubjectData();
+        const user = userResult.status === "fulfilled" ? userResult.value : null;
+        const options = filterSubjectsByUserAccess(topicSubjects || getSubjectData(), user)
+          .map(subjectDisplayName)
+          .filter(Boolean);
+        if (options.length > 0) {
+          setSubjectOptions(options);
+          setSelectedSubject((current) => (options.includes(current) ? current : options[0]));
         }
         setTopicVersion((version) => version + 1);
         if (classesResult.status === "rejected" || topicsResult.status === "rejected") {

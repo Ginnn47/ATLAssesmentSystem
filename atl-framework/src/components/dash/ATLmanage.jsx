@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Sidebar from "./sidebar";
 import criteriamanagement from "./criteriamanagement";
 import ExpertManagement from "./expertmanagement";
@@ -6,6 +7,7 @@ import { dummyATL } from "../dummyData/dummyATL";
 import { getCurrentUser, getTopics, hydrateTopic } from "../../services/atlApi";
 import { filterSubjectsByUserAccess } from "../../services/accessControl";
 import { getATLCategoryMeta, getSubskillMeta } from "../../services/labelRegistry";
+import { getSubjectData } from "../../services/topicCatalog";
 
 const getFittedSkillTitleStyle = (title) => {
   const length = String(title || "").length;
@@ -81,8 +83,13 @@ const getInitialSummaryTopic = () => {
   return window.localStorage.getItem(SUMMARY_TOPIC_KEY) || "";
 };
 
-export default function ATLmanage({ initialTab = "criteria" }) {
-  const [activeTab, setActiveTab] = useState(initialTab);
+export default function ATLmanage({ page = "criteria" }) {
+  const navigate = useNavigate();
+  const isWeightPage = page === "weight";
+  const pageTitle = isWeightPage ? "Weight Management" : "Criteria Management";
+  const pageDescription = isWeightPage
+    ? "Kelola pairwise comparison, bobot Fuzzy-AHP, dan ringkasan bobot ATL untuk setiap sub-topik pembelajaran."
+    : "Tentukan dan kelola kriteria penilaian untuk setiap sub-topik pembelajaran dengan deskripsi level yang jelas.";
   const [selectedTopic, setSelectedTopic] = useState(getInitialSummaryTopic);
   const [subjectTopics, setSubjectTopics] = useState([]);
   const [showWeightDetail, setShowWeightDetail] = useState(false);
@@ -98,9 +105,12 @@ export default function ATLmanage({ initialTab = "criteria" }) {
   };
 
   useEffect(() => {
-    Promise.all([getTopics(), getCurrentUser()])
-      .then(([subjects, user]) => {
-        const accessibleSubjects = filterSubjectsByUserAccess(subjects || [], user);
+    if (!isWeightPage) return undefined;
+    Promise.allSettled([getTopics(), getCurrentUser()])
+      .then(([topicsResult, userResult]) => {
+        const subjects = topicsResult.status === "fulfilled" ? topicsResult.value : getSubjectData();
+        const user = userResult.status === "fulfilled" ? userResult.value : null;
+        const accessibleSubjects = filterSubjectsByUserAccess(subjects || getSubjectData(), user);
         setSubjectTopics(accessibleSubjects);
         const topicIds = accessibleSubjects.flatMap((subject) => (subject.topics || []).map((topic) => topic.id));
         setSelectedTopic((current) => {
@@ -110,47 +120,51 @@ export default function ATLmanage({ initialTab = "criteria" }) {
           }
           return nextTopic;
         });
-        setBackendError("");
-      })
-      .catch((error) => {
-        setBackendError(error.message || "Gagal mengambil daftar topik dari backend.");
+        if (topicsResult.status === "rejected") {
+          setBackendError("Backend belum tersambung. Menampilkan data terakhir.");
+        } else {
+          setBackendError("");
+        }
       });
-  }, []);
+    return undefined;
+  }, [isWeightPage]);
 
   useEffect(() => {
     let cancelled = false;
+    if (!isWeightPage) return () => { cancelled = true; };
     if (!selectedTopic) return () => { cancelled = true; };
     hydrateTopic(selectedTopic)
-      .then(() => {
+      .then((result) => {
         if (!cancelled) {
-          setBackendError("");
+          setBackendError(result?.stale ? "Backend belum tersambung. Menampilkan data terakhir." : "");
           setDataVersion((version) => version + 1);
         }
       })
       .catch((error) => {
         if (!cancelled) {
-          setBackendError(error.message || "Gagal mengambil ringkasan bobot dari backend.");
-          setDataVersion((version) => version + 1);
-        }
+        setBackendError("Backend belum tersambung. Menampilkan data terakhir.");
+        setDataVersion((version) => version + 1);
+      }
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedTopic]);
+  }, [isWeightPage, selectedTopic]);
 
   useEffect(() => {
     let cancelled = false;
+    if (!isWeightPage) return () => { cancelled = true; };
     const syncWeights = () => {
       if (!selectedTopic) return;
       hydrateTopic(selectedTopic)
-        .then(() => {
+        .then((result) => {
           if (!cancelled) {
-            setBackendError("");
+            setBackendError(result?.stale ? "Backend belum tersambung. Menampilkan data terakhir." : "");
             setDataVersion((version) => version + 1);
           }
         })
         .catch((error) => {
-          if (!cancelled) setBackendError(error.message || "Gagal refresh bobot dari backend.");
+          if (!cancelled) setBackendError("Backend belum tersambung. Menampilkan data terakhir.");
         });
     };
     window.addEventListener("atl-weights-updated", syncWeights);
@@ -160,7 +174,7 @@ export default function ATLmanage({ initialTab = "criteria" }) {
       window.removeEventListener("atl-weights-updated", syncWeights);
       window.removeEventListener("focus", syncWeights);
     };
-  }, [selectedTopic]);
+  }, [isWeightPage, selectedTopic]);
 
   const summaryData = (() => {
     void dataVersion;
@@ -250,67 +264,38 @@ export default function ATLmanage({ initialTab = "criteria" }) {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <span className="px-2 py-0.5 rounded bg-primary/20 text-primary-hover text-[10px] font-bold uppercase tracking-widest">
-                  Settings / ATL Management
+                  Settings / {pageTitle}
                 </span>
                 <h1 className="mt-3 text-3xl font-black text-text-main-light lg:text-4xl">
-                  ATL System Management
+                  {pageTitle}
                 </h1>
                 <p className="mt-2 max-w-2xl text-sm text-text-sub-light">
-                  Tentukan dan kelola kriteria penilaian untuk setiap sub-topik pembelajaran dengan deskripsi level yang jelas.
+                  {pageDescription}
                 </p>
               </div>
             </div>
 
             {backendError && (
-              <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
-                <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
-                {backendError} ATL Management tidak memakai dummy/localStorage sebagai pengganti data.
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-800">
+                <span className="material-symbols-outlined mr-2 align-middle text-[18px]">sync_problem</span>
+                {backendError}
               </div>
             )}
 
-            {/* Tab Navigation */}
             <div className="rounded-2xl border border-stone-200/90 bg-white shadow-[0_8px_16px_rgba(15,23,42,0.04)]">
-              <div className="flex border-b border-stone-200/90">
-                <button
-                  onClick={() => setActiveTab("criteria")}
-                  className={`flex-1 px-6 py-4 font-semibold text-sm transition-all duration-300 ${
-                    activeTab === "criteria"
-                      ? "text-primary border-b-2 border-primary"
-                      : "text-text-sub-light hover:text-text-main-light border-b-2 border-transparent"
-                  }`}
-                >
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="material-symbols-outlined text-lg">assignment</span>
-                    Criteria Setting
-                  </span>
-                </button>
-                <button
-                  onClick={() => setActiveTab("settings")}
-                  className={`flex-1 px-6 py-4 font-semibold text-sm transition-all duration-300 ${
-                    activeTab === "settings"
-                      ? "text-primary border-b-2 border-primary"
-                      : "text-text-sub-light hover:text-text-main-light border-b-2 border-transparent"
-                  }`}
-                >
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="material-symbols-outlined text-lg">tune</span>
-                    ATL Weighting Setup
-                  </span>
-                </button>
-              </div>
-
-              {/* Content */}
               <div className="p-6">
-                {activeTab === "criteria" && React.createElement(criteriamanagement)}
-                {activeTab === "settings" && (
+                {isWeightPage ? (
                   <ExpertManagement 
-                    onAddCriteriaClick={() => setActiveTab("criteria")}
+                    onAddCriteriaClick={() => navigate("/atl/manage")}
                   />
+                ) : (
+                  React.createElement(criteriamanagement)
                 )}
               </div>
             </div>
 
             {/* SIMPLE SUMMARY VIEW */}
+            {isWeightPage && (
             <div className="overflow-hidden rounded-[2rem] border border-primary/25 bg-white shadow-sm">
               <div className="flex flex-col gap-4 border-b border-primary/20 px-6 py-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-4">
@@ -798,6 +783,8 @@ export default function ATLmanage({ initialTab = "criteria" }) {
                     </div>
                   );
                 })()}
+              </div>
+              )}
                 <div className="mt-5 rounded-2xl border border-primary/25 bg-white p-4">
                   <p className="text-[11px] font-black uppercase tracking-[0.18em] text-primary-hover">
                     Proses Fuzzy-AHP yang Dipakai
@@ -824,8 +811,7 @@ export default function ATLmanage({ initialTab = "criteria" }) {
                   <p><strong>Keterangan:</strong> Pairwise Comparison &rarr; Fuzzy Synthesis &rarr; Defuzzification &rarr; Consistency Check</p>
                 </div>
               </div>
-              )}
-            </div>
+            )}
           </div>
         </div>
       </main>

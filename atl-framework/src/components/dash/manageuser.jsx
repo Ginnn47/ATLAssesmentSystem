@@ -304,13 +304,13 @@ export default function ManageUser() {
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <div>
                 <span className="rounded bg-primary/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-stone-900">
-                  Settings / User Management
+                  Settings / Academic Management
                 </span>
                 <h1 className="mt-2 text-2xl font-black text-stone-900 lg:text-3xl">
-                  Manajemen Pengguna & Akses
+                  Academic Management
                 </h1>
                 <p className="mt-2 text-sm text-stone-600">
-                  Kelola user, role, akses kelas, dan akses mapel agar manajemen ATL tetap terstruktur.
+                  Kelola pengguna akademik, role, akses kelas, dan akses mapel agar manajemen ATL tetap terstruktur.
                 </p>
               </div>
               <div className="inline-flex items-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700">
@@ -322,7 +322,7 @@ export default function ManageUser() {
             {backendError && (
               <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
                 <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
-                {backendError} User Management tidak memakai dummy/localStorage sebagai pengganti data.
+                {backendError} Academic Management tidak memakai dummy/localStorage sebagai pengganti data.
               </div>
             )}
 

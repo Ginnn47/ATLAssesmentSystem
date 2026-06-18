@@ -58,11 +58,10 @@ export const getGrantedFeatures = (user = null) => {
   if (isAdminUser(user)) {
     return [
       "Semua dashboard dan monitoring sistem",
-      "User Management",
       "Academic Management",
       "Input Penilaian ATL",
       "ATL Reports",
-      "ATL Management",
+      "Criteria Management",
       "Weight Management",
     ];
   }
@@ -70,7 +69,7 @@ export const getGrantedFeatures = (user = null) => {
   const features = ["Assessment Input"];
   if (roles.includes(ROLE_CODES.HOMEROOM)) features.push("Student Monitoring");
   if (roles.includes(ROLE_CODES.SUBJECT_COORDINATOR)) features.push("Subject Reports");
-  if (roles.includes(ROLE_CODES.ATL_EXPERT)) features.push("ATL Criteria & Weight Management");
+  if (roles.includes(ROLE_CODES.ATL_EXPERT)) features.push("Criteria Management", "Weight Management");
   return features;
 };
 
@@ -105,15 +104,11 @@ export const getSidebarMenuGroups = (user = null) => {
 
   const config = [];
   if (admin) {
-    config.push({ icon: "manage_accounts", label: "User Management", key: "user", to: "/settings/users" });
+    config.push({ icon: "school", label: "Academic Management", key: "academic", to: "/academic/manage" });
   }
   if (canExpert) {
-    config.push({ icon: "assignment", label: "ATL Management", key: "atl", to: "/atl/manage" });
+    config.push({ icon: "assignment", label: "Criteria Management", key: "criteria", to: "/atl/manage" });
     config.push({ icon: "tune", label: "Weight Management", key: "weight", to: "/atl/weight" });
-  }
-
-  if (admin) {
-    config.push({ icon: "school", label: "Academic Management", key: "academic", to: "/settings/users" });
   }
 
   return { main, config };
