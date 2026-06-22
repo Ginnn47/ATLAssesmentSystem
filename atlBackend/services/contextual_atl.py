@@ -36,6 +36,7 @@ from .FuzzyATLEquation import (
     score_topic_assessment,
 )
 from .labels import ATL_CANONICAL_HIERARCHY, ATL_CATEGORY_LABELS, ATL_SUBSKILL_ALIASES, SCORE_LEVEL_ORDER, get_score_level
+from .pairwise_validation import validate_tfn_scale_options, validate_weighting_payload
 from .reports import enrich_student_report
 
 
@@ -631,6 +632,21 @@ def update_pairwise_scale_options(context, options):
     if not isinstance(options, list):
         raise ValueError("Pairwise scale options harus berupa array.")
     existing = {item.code: item for item in ensure_pairwise_scale_options(context)}
+    validation_payload = []
+    for payload in options:
+        if not isinstance(payload, dict):
+            raise ValueError("Setiap scale option harus berupa object.")
+        option = existing.get(payload.get("code"))
+        validation_payload.append(
+            {
+                **payload,
+                "label": option.label if option else payload.get("label"),
+                "ahpValue": option.ahp_value if option else payload.get("ahpValue"),
+            }
+        )
+    scale_validation = validate_tfn_scale_options(validation_payload)
+    if not scale_validation["valid"]:
+        raise ValueError(scale_validation["errors"][0]["message"])
     with transaction.atomic():
         for payload in options:
             if not isinstance(payload, dict):
@@ -824,11 +840,21 @@ def calculate_context_weights(context, pairwise_payload=None, expert_user="", pe
     scale_options = get_pairwise_scale_lookup(context)
     scale_options_payload = get_pairwise_scale_options(context)
     if isinstance(pairwise_payload, dict) and pairwise_payload.get("__criterionPackages"):
+        packages_payload = pairwise_payload.get("packages") or {}
         result = calculate_weighting_packages(
-            pairwise_payload.get("packages") or {},
+            packages_payload,
             require_complete=persist,
             scale_options=scale_options,
         )
+        validation = validate_weighting_payload(
+            packages_payload,
+            scale_options_payload,
+            result=result,
+            acknowledged=bool(pairwise_payload.get("validationAcknowledged")),
+        )
+        result["validation"] = validation
+        if persist and not validation.get("canApplyWeight"):
+            raise ValueError((validation.get("errors") or [{}])[0].get("message") or "Bobot belum lolos validasi.")
         saved_at = pairwise_payload.get("savedAt") or timezone.now().isoformat()
         activity = pairwise_payload.get("activity") or {}
         persisted_weights = {

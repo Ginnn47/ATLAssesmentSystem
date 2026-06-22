@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+from django.contrib.auth.models import User
 from django.utils import timezone
 
 from ..models import (
@@ -7,6 +8,8 @@ from ..models import (
     ContextWeightSnapshot,
     FuzzyWeight,
     LearningContext,
+    PairwiseComparison,
+    SchoolClass,
     StudentAssessment,
     Subject,
     Topic,
@@ -321,6 +324,21 @@ def _build_dashboard_payload(topics, contexts, weights_by_topic, assessments, as
     weakest = min([item for item in atl_distribution if item["score"] > 0] or atl_distribution, key=lambda item: item["score"], default={"category": "-"})
     best_class = max(class_rows, key=lambda item: item["average"], default=None)
     context_record_count = StudentAssessment.objects.count()
+    user_profiles = list(UserProfile.objects.select_related("user").all())
+    role_texts = [f"{profile.role_group} {profile.role_label}".lower() for profile in user_profiles]
+    total_users = User.objects.count()
+    active_teacher_count = len([
+        profile for profile in user_profiles
+        if profile.user.is_active and "admin" not in f"{profile.role_group} {profile.role_label}".lower() and "akademik" not in f"{profile.role_group} {profile.role_label}".lower()
+    ])
+    subject_coordinator_users = len([text for text in role_texts if "pj mapel" in text or "penanggung" in text])
+    atl_expert_users = len([text for text in role_texts if "fuzzy" in text or "expert" in text])
+    assessed_classes = len({student["className"] for student in student_rows if student["score"] is not None})
+    total_classes = SchoolClass.objects.filter(is_active=True).count()
+    total_subjects = Subject.objects.count()
+    total_active_topics = len(topics)
+    pairwise_configuration = PairwiseComparison.objects.count()
+    weight_available = bool(weights_by_topic) or ContextWeightSnapshot.objects.exists()
 
     return {
         "meta": {
@@ -332,11 +350,25 @@ def _build_dashboard_payload(topics, contexts, weights_by_topic, assessments, as
             "average": average,
             "level": _score_category(average),
             "completion": completion,
+            "totalUsers": total_users,
+            "totalGuruAktif": active_teacher_count,
             "totalStudents": total_students,
+            "totalClasses": total_classes,
+            "assessedClasses": assessed_classes,
+            "classCoverage": round((assessed_classes / total_classes) * 100) if total_classes else 0,
+            "totalSubjects": total_subjects,
+            "totalActiveTopic": total_active_topics,
+            "topicCoverage": round((topic_active / total_active_topics) * 100) if total_active_topics else 0,
             "assessedStudents": assessed_students,
             "assessmentSaved": assessment_saved,
+            "assessmentRecords": Assessment.objects.count() + context_record_count,
             "topicActive": topic_active,
             "criteriaCount": total_criteria,
+            "pairwiseConfiguration": pairwise_configuration,
+            "weightAvailable": weight_available,
+            "evaluatorUsers": active_teacher_count,
+            "subjectCoordinatorUsers": subject_coordinator_users,
+            "atlExpertUsers": atl_expert_users,
             "bestClass": best_class["className"] if best_class else "-",
             "needAttention": len(attention_students),
             "strongestATL": strongest["category"],

@@ -97,3 +97,4 @@ admin.site.register(PairwiseComparison)
 admin.site.register(PairwiseScaleOption)
 admin.site.register(RubricScale)
 admin.site.register(ContextWeightSnapshot)
+

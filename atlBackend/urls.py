@@ -24,6 +24,7 @@ urlpatterns = [
     path('api/auth/logout/', views.auth_logout_api),
     path('api/auth/me/', views.auth_me_api),
     path('api/classes/', views.classes_api),
+    path('api/classes/import-students/', views.class_students_import_api),
     path('api/users/', views.users_api),
     path('api/users/<int:user_id>/', views.user_detail_api),
     path('api/labels/', views.labels_api),

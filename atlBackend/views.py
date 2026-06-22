@@ -1,4 +1,5 @@
 import json
+import re
 
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
@@ -8,6 +9,7 @@ from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from openpyxl import load_workbook
 
 from .models import (
     AcademicPeriod,
@@ -88,8 +90,8 @@ def default_profile_values_for(user):
         }
     return {
         "nip": "",
-        "role_label": "PJ Mapel",
-        "role_group": "PJ Mapel",
+        "role_label": "Evaluator",
+        "role_group": "Guru / Evaluator",
         "status": "Aktif",
     }
 
@@ -116,6 +118,170 @@ def is_atl_user_active(user):
         return True
     profile = get_atl_profile(user)
     return bool(profile and str(profile.status).strip().lower() in {"aktif", "active"})
+
+
+ROLE_ADMIN = "ROLE_ADMIN"
+ROLE_EVALUATOR = "ROLE_EVALUATOR"
+ROLE_HOMEROOM = "ROLE_HOMEROOM"
+ROLE_SUBJECT_COORDINATOR = "ROLE_SUBJECT_COORDINATOR"
+ROLE_ATL_EXPERT = "ROLE_ATL_EXPERT"
+ROLE_ORDER = [ROLE_ADMIN, ROLE_EVALUATOR, ROLE_HOMEROOM, ROLE_SUBJECT_COORDINATOR, ROLE_ATL_EXPERT]
+ROLE_LABELS = {
+    ROLE_ADMIN: "Admin",
+    ROLE_EVALUATOR: "Evaluator",
+    ROLE_HOMEROOM: "Wali Kelas",
+    ROLE_SUBJECT_COORDINATOR: "PJ Mapel",
+    ROLE_ATL_EXPERT: "ATL Expert",
+}
+
+
+def role_codes_for_user(user):
+    if not user.is_authenticated:
+        return []
+    profile = get_atl_profile(user)
+    text = " ".join(
+        [
+            profile.role_label if profile else "",
+            profile.role_group if profile else "",
+            "admin" if user.is_superuser else "",
+        ]
+    ).lower()
+    roles = set()
+    if user.is_superuser or "admin" in text or "akademik" in text or ROLE_ADMIN.lower() in text:
+        roles.add(ROLE_ADMIN)
+    else:
+        roles.add(ROLE_EVALUATOR)
+    if "wali" in text or ROLE_HOMEROOM.lower() in text:
+        roles.add(ROLE_HOMEROOM)
+    if "pj mapel" in text or "penanggung" in text or ROLE_SUBJECT_COORDINATOR.lower() in text:
+        roles.add(ROLE_SUBJECT_COORDINATOR)
+    if "fuzzy" in text or "expert" in text or ROLE_ATL_EXPERT.lower() in text:
+        roles.add(ROLE_ATL_EXPERT)
+    return [role for role in ROLE_ORDER if role in roles]
+
+
+def normalize_role_codes_from_payload(payload, user=None):
+    raw_roles = payload.get("roles") or payload.get("roleCodes") or payload.get("role_codes") or []
+    if isinstance(raw_roles, str):
+        raw_roles = [raw_roles]
+    roles = {role for role in raw_roles if role in ROLE_ORDER}
+    text = " ".join([
+        payload.get("roleLabel") or payload.get("role_label") or "",
+        payload.get("roleGroup") or payload.get("role_group") or "",
+        payload.get("role") or "",
+    ]).lower()
+    if user and (user.is_superuser or "admin" in text or "akademik" in text):
+        roles.add(ROLE_ADMIN)
+    if "wali" in text:
+        roles.add(ROLE_HOMEROOM)
+    if "pj mapel" in text or "penanggung" in text:
+        roles.add(ROLE_SUBJECT_COORDINATOR)
+    if "fuzzy" in text or "expert" in text:
+        roles.add(ROLE_ATL_EXPERT)
+    if ROLE_ADMIN not in roles:
+        roles.add(ROLE_EVALUATOR)
+    return [role for role in ROLE_ORDER if role in roles]
+
+
+def profile_fields_for_roles(role_codes):
+    roles = [role for role in ROLE_ORDER if role in set(role_codes or [])]
+    if ROLE_ADMIN in roles:
+        return "Admin", "Admin"
+    extension_roles = [role for role in roles if role != ROLE_EVALUATOR]
+    labels = [ROLE_LABELS[role] for role in roles if role != ROLE_ADMIN]
+    role_label = " + ".join(labels) if labels else "Evaluator"
+    if len(extension_roles) > 1:
+        role_group = "Multi Role"
+    elif extension_roles:
+        role_group = {
+            ROLE_HOMEROOM: "Guru Wali Kelas",
+            ROLE_SUBJECT_COORDINATOR: "PJ Mapel",
+            ROLE_ATL_EXPERT: "Fuzzy Expert",
+        }[extension_roles[0]]
+    else:
+        role_group = "Guru / Evaluator"
+    return role_label, role_group
+
+
+def is_admin_user(user):
+    return ROLE_ADMIN in role_codes_for_user(user)
+
+
+def require_active_user(request):
+    if is_atl_user_active(request.user):
+        return None
+    if request.user.is_authenticated:
+        return api_response({"error": "ATL account is inactive or missing a profile"}, status=403)
+    return api_response({"error": "Authentication required"}, status=401)
+
+
+def require_admin_access(request):
+    guard = require_active_user(request)
+    if guard:
+        return guard
+    if is_admin_user(request.user):
+        return None
+    return api_response({"error": "Admin role required"}, status=403)
+
+
+def require_any_role(request, allowed_roles):
+    guard = require_active_user(request)
+    if guard:
+        return guard
+    if is_admin_user(request.user):
+        return None
+    roles = set(role_codes_for_user(request.user))
+    if roles.intersection(set(allowed_roles or [])):
+        return None
+    return api_response({"error": "Role is not allowed for this endpoint"}, status=403)
+
+
+def user_subject_codes(user):
+    profile = get_atl_profile(user)
+    if not profile:
+        return set()
+    return {item.code for item in profile.subject_access.all()}
+
+
+def user_class_codes(user):
+    profile = get_atl_profile(user)
+    if not profile:
+        return set()
+    return {item.code for item in profile.class_access.all()}
+
+
+def require_subject_access(request, subject, allowed_roles):
+    guard = require_any_role(request, allowed_roles)
+    if guard:
+        return guard
+    if is_admin_user(request.user):
+        return None
+    if subject and subject.code in user_subject_codes(request.user):
+        return None
+    return api_response({"error": "Subject access denied"}, status=403)
+
+
+def subject_for_context(context):
+    if context.legacy_topic_code:
+        topic = Topic.objects.filter(code=context.legacy_topic_code, is_active=True).select_related("subject").first()
+        if topic:
+            return topic.subject
+    return Subject.objects.filter(label=context.subject_name).first() or Subject.objects.filter(code=context.subject_name).first()
+
+
+def require_context_subject_access(request, context, allowed_roles):
+    return require_subject_access(request, subject_for_context(context), allowed_roles)
+
+
+def require_class_access(request, class_code):
+    guard = require_active_user(request)
+    if guard:
+        return guard
+    if is_admin_user(request.user):
+        return None
+    if ROLE_HOMEROOM in role_codes_for_user(request.user) and class_code in user_class_codes(request.user):
+        return None
+    return api_response({"error": "Class access denied"}, status=403)
 
 
 def update_profile_login_label(user):
@@ -161,6 +327,7 @@ def user_to_dict(user):
     role_label = profile.role_label if profile else ("Admin" if user.is_superuser else "")
     role_group = profile.role_group if profile else ("Admin" if user.is_superuser else "")
     status = profile.status if profile else ("Aktif" if user.is_active else "Nonaktif")
+    role_codes = role_codes_for_user(user)
     return {
         "id": user.id,
         "username": user.username,
@@ -170,6 +337,10 @@ def user_to_dict(user):
         "roleLabel": role_label,
         "roleGroup": role_group,
         "role": role_label or role_group,
+        "roles": role_codes,
+        "roleCodes": role_codes,
+        "roleNames": [ROLE_LABELS.get(role, role) for role in role_codes],
+        "isAdmin": ROLE_ADMIN in role_codes,
         "status": status,
         "lastLogin": profile.last_login_label if profile else (user.last_login.isoformat() if user.last_login else "-"),
         "classAccess": [item.code for item in profile.class_access.all()] if profile else [],
@@ -183,6 +354,26 @@ def get_school_class(value):
     if not value:
         return None
     return SchoolClass.objects.filter(code=value).first() or SchoolClass.objects.filter(display_name=value).first()
+
+
+def normalize_class_code(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    raw = raw.split("-", 1)[0].strip()
+    return re.sub(r"\s+", "", raw).upper()
+
+
+def normalize_excel_header(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def pick_excel_column(headers, aliases):
+    normalized_aliases = {normalize_excel_header(alias) for alias in aliases}
+    for index, header in enumerate(headers):
+        if normalize_excel_header(header) in normalized_aliases:
+            return index
+    return None
 
 
 def active_period():
@@ -306,7 +497,7 @@ def classes_api(request):
     if request.method == "OPTIONS":
         return api_response({})
 
-    guard = require_authenticated_mutation(request)
+    guard = require_admin_access(request) if request.method == "POST" else require_active_user(request)
     if guard:
         return guard
 
@@ -332,12 +523,94 @@ def classes_api(request):
 
 
 @csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def class_students_import_api(request):
+    if request.method == "OPTIONS":
+        return api_response({})
+
+    guard = require_admin_access(request)
+    if guard:
+        return guard
+
+    uploaded = request.FILES.get("file") or request.FILES.get("excel")
+    if not uploaded:
+        return api_response({"error": "File Excel data siswa wajib diupload."}, status=400)
+
+    default_class_code = normalize_class_code(request.POST.get("classCode") or request.POST.get("kelas"))
+    default_display_name = (request.POST.get("displayName") or "").strip()
+    try:
+        workbook = load_workbook(uploaded, read_only=True, data_only=True)
+        sheet = workbook.active
+        rows = list(sheet.iter_rows(values_only=True))
+    except Exception:
+        return api_response({"error": "File Excel tidak bisa dibaca. Gunakan format .xlsx dengan header NIS, Nama, dan Kelas."}, status=400)
+
+    header_index = None
+    headers = []
+    for index, row in enumerate(rows):
+        values = [str(cell or "").strip() for cell in row]
+        if any(values):
+            header_index = index
+            headers = values
+            break
+
+    if header_index is None:
+        return api_response({"error": "File Excel kosong."}, status=400)
+
+    nis_index = pick_excel_column(headers, ["nis", "nomor induk", "nomor induk siswa", "student id", "id siswa"])
+    name_index = pick_excel_column(headers, ["nama", "nama siswa", "name", "full name", "student name"])
+    class_index = pick_excel_column(headers, ["kelas", "class", "class code", "kode kelas", "class name"])
+
+    if nis_index is None or name_index is None:
+        return api_response({"error": "Header Excel minimal harus memiliki kolom NIS dan Nama."}, status=400)
+    if class_index is None and not default_class_code:
+        return api_response({"error": "Tambahkan kolom Kelas di Excel atau isi Kode Kelas Default."}, status=400)
+
+    imported = 0
+    skipped = []
+    touched_classes = {}
+    with transaction.atomic():
+        for row_number, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
+            cells = list(row or [])
+            nis = str(cells[nis_index] if nis_index < len(cells) else "").strip()
+            full_name = str(cells[name_index] if name_index < len(cells) else "").strip()
+            class_value = cells[class_index] if class_index is not None and class_index < len(cells) else default_class_code
+            class_code = normalize_class_code(class_value)
+            if not nis or not full_name or not class_code:
+                skipped.append(row_number)
+                continue
+
+            display_name = default_display_name or (
+                str(class_value).strip() if class_index is not None and " - " in str(class_value) else f"{class_code} - Primary"
+            )
+            school_class, _ = SchoolClass.objects.update_or_create(
+                code=class_code,
+                defaults={"display_name": display_name, "level": request.POST.get("level") or "Primary", "is_active": True},
+            )
+            Student.objects.update_or_create(
+                nis=nis,
+                defaults={"full_name": full_name, "school_class": school_class, "is_active": True},
+            )
+            touched_classes[school_class.code] = school_class
+            imported += 1
+
+    return api_response(
+        {
+            "imported": imported,
+            "skippedRows": skipped,
+            "classes": [class_to_dict(item) for item in touched_classes.values()],
+        },
+        status=201,
+    )
+
+
+@csrf_exempt
 @require_http_methods(["GET", "POST", "OPTIONS"])
 def users_api(request):
     if request.method == "OPTIONS":
         return api_response({})
 
-    guard = require_authenticated_mutation(request)
+    guard = require_admin_access(request)
     if guard:
         return guard
 
@@ -362,11 +635,13 @@ def users_api(request):
         )
     except IntegrityError:
         return api_response({"error": "Username already exists"}, status=400)
+    role_codes = normalize_role_codes_from_payload(payload, user=user)
+    role_label, role_group = profile_fields_for_roles(role_codes)
     profile = UserProfile.objects.create(
         user=user,
         nip=payload.get("nip") or "",
-        role_label=payload.get("roleLabel") or payload.get("role_label") or "Guru / Evaluator",
-        role_group=payload.get("roleGroup") or payload.get("role_group") or "PJ Mapel",
+        role_label=role_label,
+        role_group=role_group,
         status=payload.get("status") or "Aktif",
         last_login_label="-",
     )
@@ -381,7 +656,7 @@ def user_detail_api(request, user_id):
     if request.method == "OPTIONS":
         return api_response({})
 
-    guard = require_authenticated_mutation(request)
+    guard = require_admin_access(request)
     if guard:
         return guard
 
@@ -421,11 +696,12 @@ def user_detail_api(request, user_id):
 
     profile, _ = UserProfile.objects.get_or_create(
         user=user,
-        defaults={"role_label": "Guru / Evaluator", "role_group": "PJ Mapel"},
+        defaults={"role_label": "Evaluator", "role_group": "Guru / Evaluator"},
     )
     profile.nip = payload.get("nip", profile.nip)
-    profile.role_label = payload.get("roleLabel") or payload.get("role_label") or profile.role_label
-    profile.role_group = payload.get("roleGroup") or payload.get("role_group") or profile.role_group
+    if any(key in payload for key in ("roles", "roleCodes", "role_codes", "roleLabel", "role_label", "roleGroup", "role_group", "role")):
+        role_codes = normalize_role_codes_from_payload(payload, user=user)
+        profile.role_label, profile.role_group = profile_fields_for_roles(role_codes)
     profile.status = payload.get("status") or profile.status
     profile.save()
     if "classAccess" in payload:
@@ -614,7 +890,7 @@ def students_api(request):
     if request.method == "OPTIONS":
         return api_response({})
 
-    guard = require_authenticated_mutation(request)
+    guard = require_admin_access(request) if request.method == "POST" else require_active_user(request)
     if guard:
         return guard
 
@@ -656,7 +932,7 @@ def student_detail_api(request, student_id):
     if request.method == "OPTIONS":
         return api_response({})
 
-    guard = require_authenticated_mutation(request)
+    guard = require_admin_access(request) if request.method in {"POST", "PUT", "DELETE"} else require_active_user(request)
     if guard:
         return guard
 
@@ -694,6 +970,9 @@ def student_detail_api(request, student_id):
 def atl_hierarchy_api(request):
     if request.method == "OPTIONS":
         return api_response({})
+    guard = require_active_user(request)
+    if guard:
+        return guard
 
     try:
         return api_response(hierarchy_to_dict())
@@ -706,7 +985,7 @@ def atl_hierarchy_api(request):
 def contexts_api(request):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_any_role(request, [ROLE_ATL_EXPERT]) if request.method == "POST" else require_active_user(request)
     if guard:
         return guard
 
@@ -725,6 +1004,9 @@ def contexts_api(request):
                 or Subject.objects.filter(code=subject_name).first()
                 or Subject.objects.first()
             )
+            subject_guard = require_subject_access(request, subject, [ROLE_ATL_EXPERT])
+            if subject_guard:
+                return subject_guard
             if subject:
                 Topic.objects.update_or_create(
                     code=legacy_topic_code,
@@ -769,6 +1051,9 @@ def contexts_api(request):
 def context_flow_api(request, context_id):
     if request.method == "OPTIONS":
         return api_response({})
+    guard = require_active_user(request)
+    if guard:
+        return guard
 
     try:
         repair = ensure_assessable_topic(context_id) if not str(context_id).isdigit() else {}
@@ -783,13 +1068,17 @@ def context_flow_api(request, context_id):
 def context_subskills_api(request, context_id):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_active_user(request)
     if guard:
         return guard
 
     try:
         repair = ensure_assessable_topic(context_id) if not str(context_id).isdigit() else {}
         context = repair.get("context") or get_context(context_id)
+        if request.method == "POST":
+            subject_guard = require_context_subject_access(request, context, [ROLE_ATL_EXPERT])
+            if subject_guard:
+                return subject_guard
         if request.method == "GET":
             return api_response({"subskills": [subskill_to_dict(item) for item in selected_subskills(context)]})
 
@@ -815,13 +1104,17 @@ def context_subskills_api(request, context_id):
 def context_rubric_items_api(request, context_id):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_active_user(request)
     if guard:
         return guard
 
     try:
         repair = ensure_assessable_topic(context_id) if not str(context_id).isdigit() else {}
         context = repair.get("context") or get_context(context_id)
+        if request.method == "POST":
+            subject_guard = require_context_subject_access(request, context, [ROLE_ATL_EXPERT])
+            if subject_guard:
+                return subject_guard
         if request.method == "GET":
             return api_response({"rubricItems": [rubric_item_to_dict(item) for item in context.rubric_items.all()]})
 
@@ -856,13 +1149,16 @@ def context_rubric_items_api(request, context_id):
 def context_pairwise_api(request, context_id):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_active_user(request)
     if guard:
         return guard
 
     try:
         context = get_context(context_id)
         if request.method == "POST":
+            subject_guard = require_context_subject_access(request, context, [ROLE_ATL_EXPERT])
+            if subject_guard:
+                return subject_guard
             payload = parse_body(request)
             save_context_pairwise(context, payload.get("pairwise") or payload.get("comparisons") or [], payload.get("expertUser") or "")
         return api_response(
@@ -890,14 +1186,16 @@ def context_pairwise_api(request, context_id):
 def context_pairwise_scale_api(request, context_id):
     if request.method == "OPTIONS":
         return api_response({})
-    if request.method == "PUT":
-        guard = require_authenticated_mutation(request)
-        if guard:
-            return guard
+    guard = require_active_user(request)
+    if guard:
+        return guard
 
     try:
         context = get_context(context_id)
         if request.method == "PUT":
+            subject_guard = require_context_subject_access(request, context, [ROLE_ATL_EXPERT])
+            if subject_guard:
+                return subject_guard
             payload = parse_body(request)
             scale_options = update_pairwise_scale_options(context, payload.get("options") or [])
             return api_response({"scaleOptions": scale_options})
@@ -913,12 +1211,15 @@ def context_pairwise_scale_api(request, context_id):
 def context_pairwise_scale_reset_api(request, context_id):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_active_user(request)
     if guard:
         return guard
 
     try:
         context = get_context(context_id)
+        subject_guard = require_context_subject_access(request, context, [ROLE_ATL_EXPERT])
+        if subject_guard:
+            return subject_guard
         return api_response({"scaleOptions": reset_pairwise_scale_options(context)})
     except (OperationalError, LearningContext.DoesNotExist):
         return api_response({"error": "Context unavailable"}, status=404)
@@ -929,12 +1230,15 @@ def context_pairwise_scale_reset_api(request, context_id):
 def context_weights_calculate_api(request, context_id):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_active_user(request)
     if guard:
         return guard
 
     try:
         context = get_context(context_id)
+        subject_guard = require_context_subject_access(request, context, [ROLE_ATL_EXPERT])
+        if subject_guard:
+            return subject_guard
         payload = parse_body(request)
         persist = payload.get("persist", True)
         result = calculate_context_weights(
@@ -957,6 +1261,9 @@ def context_weights_calculate_api(request, context_id):
 def context_weights_api(request, context_id):
     if request.method == "OPTIONS":
         return api_response({})
+    guard = require_active_user(request)
+    if guard:
+        return guard
 
     try:
         context = get_context(context_id)
@@ -981,6 +1288,9 @@ def context_weights_api(request, context_id):
 def rubric_scales_api(request):
     if request.method == "OPTIONS":
         return api_response({})
+    guard = require_active_user(request)
+    if guard:
+        return guard
 
     try:
         ensure_catalog()
@@ -994,6 +1304,9 @@ def rubric_scales_api(request):
 def topics_api(request):
     if request.method == "OPTIONS":
         return api_response({})
+    guard = require_active_user(request)
+    if guard:
+        return guard
 
     try:
         ensure_catalog()
@@ -1016,7 +1329,7 @@ def topics_api(request):
 def topic_detail_api(request, topic_id):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_admin_access(request)
     if guard:
         return guard
 
@@ -1038,12 +1351,16 @@ def topic_detail_api(request, topic_id):
 def topic_criteria_api(request, topic_id):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_active_user(request)
     if guard:
         return guard
 
     try:
         topic = get_topic(topic_id)
+        if request.method == "POST":
+            subject_guard = require_subject_access(request, topic.subject, [ROLE_ATL_EXPERT])
+            if subject_guard:
+                return subject_guard
         if request.method == "GET":
             repair = ensure_assessable_topic(topic_id)
             try:
@@ -1101,12 +1418,15 @@ def topic_criteria_api(request, topic_id):
 def criterion_detail_api(request, criterion_id):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_active_user(request)
     if guard:
         return guard
 
     try:
         criterion = Criterion.objects.get(id=criterion_id)
+        subject_guard = require_subject_access(request, criterion.topic.subject, [ROLE_ATL_EXPERT])
+        if subject_guard:
+            return subject_guard
         if request.method == "DELETE":
             topic = criterion.topic
             old_name = criterion.name
@@ -1141,6 +1461,9 @@ def criterion_detail_api(request, criterion_id):
     except Criterion.DoesNotExist:
         try:
             rubric_item = ContextRubricItem.objects.select_related("context", "subskill", "subskill__category").get(id=criterion_id)
+            subject_guard = require_context_subject_access(request, rubric_item.context, [ROLE_ATL_EXPERT])
+            if subject_guard:
+                return subject_guard
             if request.method == "DELETE":
                 rubric_item.delete()
                 return api_response({"deleted": True})
@@ -1246,6 +1569,10 @@ def fuzzy_calculate_api(request):
     if request.method == "OPTIONS":
         return api_response({})
 
+    guard = require_any_role(request, [ROLE_ATL_EXPERT])
+    if guard:
+        return guard
+
     payload = parse_body(request)
     result = calculate_fuzzy_ahp(
         payload.get("criteria") or [],
@@ -1260,12 +1587,15 @@ def fuzzy_calculate_api(request):
 def topic_weights_api(request, topic_id):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_active_user(request)
     if guard:
         return guard
 
     try:
         topic = get_topic(topic_id)
+        subject_guard = require_subject_access(request, topic.subject, [ROLE_ATL_EXPERT])
+        if subject_guard:
+            return subject_guard
         if request.method == "GET":
             record = FuzzyWeight.objects.filter(topic=topic).first()
             return api_response({"weights": record.weights if record else {}, "debug": record.debug if record else {}})
@@ -1300,7 +1630,7 @@ def topic_weights_api(request, topic_id):
 def assessments_api(request):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_authenticated_mutation(request)
+    guard = require_any_role(request, [ROLE_EVALUATOR])
     if guard:
         return guard
 
@@ -1408,6 +1738,9 @@ def assessments_api(request):
 def assessments_preview_api(request):
     if request.method == "OPTIONS":
         return api_response({})
+    guard = require_any_role(request, [ROLE_EVALUATOR])
+    if guard:
+        return guard
 
     payload = parse_body(request)
     raw_items = payload.get("items")
@@ -1453,6 +1786,9 @@ def assessments_preview_api(request):
 def dashboard_api(request):
     if request.method == "OPTIONS":
         return api_response({})
+    guard = require_active_user(request)
+    if guard:
+        return guard
 
     try:
         ensure_catalog()
@@ -1469,6 +1805,10 @@ def student_analytics_api(request):
 
     payload = parse_body(request) if request.method == "POST" else {}
     class_name = request.GET.get("class") or payload.get("class") or "3A - Primary"
+    school_class = get_school_class(class_name)
+    class_guard = require_class_access(request, school_class.code if school_class else normalize_class_code(class_name))
+    if class_guard:
+        return class_guard
     try:
         ensure_catalog()
         topics = list(
@@ -1516,12 +1856,18 @@ def reports_api(request):
             ensure_assessable_topic(topic_id)
         try:
             context = get_context(context_id)
+            subject_guard = require_context_subject_access(request, context, [ROLE_SUBJECT_COORDINATOR])
+            if subject_guard:
+                return subject_guard
             if context.rubric_items.exists():
                 return api_response(build_context_report(class_name, context))
         except (LearningContext.DoesNotExist, OperationalError):
             pass
 
         topic = get_topic(topic_id)
+        subject_guard = require_subject_access(request, topic.subject, [ROLE_SUBJECT_COORDINATOR])
+        if subject_guard:
+            return subject_guard
         criteria = [criterion_to_dict(item) for item in topic.criteria.all()]
         weights_record = FuzzyWeight.objects.filter(topic=topic).first()
         weights = weights_record.weights if weights_record else {}
@@ -1542,8 +1888,18 @@ def reports_export_api(request):
     if request.method == "OPTIONS":
         response = HttpResponse(status=204)
     else:
+        auth_guard = require_any_role(request, [ROLE_SUBJECT_COORDINATOR])
+        if auth_guard:
+            return auth_guard
         payload = parse_body(request)
         meta = payload.get("meta") or {}
+        topic_id = meta.get("topicId") or meta.get("topic") or payload.get("topicId") or payload.get("topic")
+        if topic_id:
+            topic = Topic.objects.filter(code=topic_id, is_active=True).select_related("subject").first()
+            if topic:
+                subject_guard = require_subject_access(request, topic.subject, [ROLE_SUBJECT_COORDINATOR])
+                if subject_guard:
+                    return subject_guard
         columns = payload.get("columns") or []
         rows = payload.get("rows") or []
         if not isinstance(columns, list) or not columns:
