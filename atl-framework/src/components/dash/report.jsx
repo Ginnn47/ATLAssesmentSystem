@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import Sidebar from "./sidebar";
-import { exportReportExcel, getClasses, getCurrentUser, getReport, getTopics } from "../../services/atlApi";
+import { exportReportExcel, getClasses, getCurrentUser, getReport, getStudents, getTopics } from "../../services/atlApi";
 import { filterSubjectsByUserAccess } from "../../services/accessControl";
 import {
   getATLCategoryMeta,
@@ -30,6 +30,12 @@ const DEFAULT_REPORT_FILTER = {
   subj: "singing",
   topic: "singing_christmas_carol",
   perPage: 5,
+  searchText: "",
+  showFilterPanel: false,
+  statusFilter: "all",
+  levelFilter: "all",
+  strengthFilter: "all",
+  focusFilter: "all",
 };
 
 const emptyReportCache = () => ({
@@ -60,6 +66,33 @@ const writeReportCache = (cache) => {
 };
 
 const reportSnapshotKey = (className, topicId) => `${className || "class"}::${topicId || "topic"}`;
+
+const topicHasReportCriteria = (topic = {}) => {
+  if (Object.prototype.hasOwnProperty.call(topic, "isAssessable")) {
+    return Boolean(topic.isAssessable) || Number(topic.rubricCount || 0) > 0;
+  }
+  if (Object.prototype.hasOwnProperty.call(topic, "rubricCount")) {
+    return Number(topic.rubricCount || 0) > 0;
+  }
+  return true;
+};
+
+const reportReadySubjects = (subjects = []) => (
+  (subjects || [])
+    .map((subject) => ({
+      ...subject,
+      topics: (subject.topics || []).filter(topicHasReportCriteria),
+    }))
+    .filter((subject) => subject.topics.length > 0)
+);
+
+const firstReportSelection = (subjects = []) => {
+  const subject = subjects[0] || null;
+  return {
+    subjectId: subject?.id || "",
+    topicId: subject?.topics?.[0]?.id || "",
+  };
+};
 
 const trimSnapshots = (snapshots) => Object.fromEntries(
   Object.entries(snapshots || {})
@@ -93,7 +126,9 @@ export default function Report() {
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedDetailStudent, setSelectedDetailStudent] = useState(null);
   const [apiReport, setApiReport] = useState(initialState.snapshot?.report || null);
-  const [subjects, setSubjects] = useState(initialState.cache.catalog.subjects || []);
+  const [fallbackStudents, setFallbackStudents] = useState([]);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
+  const [subjects, setSubjects] = useState(() => reportReadySubjects(initialState.cache.catalog.subjects || []));
   const [snapshotUpdatedAt, setSnapshotUpdatedAt] = useState(initialState.snapshot?.updatedAt || "");
   const [isUpdating, setIsUpdating] = useState(false);
   const [hasNewData, setHasNewData] = useState(initialState.isDirty);
@@ -104,12 +139,26 @@ export default function Report() {
   const [excelPreviewRows, setExcelPreviewRows] = useState([]);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
-  const [searchText, setSearchText] = useState("");
-  const [showFilterPanel, setShowFilterPanel] = useState(false);
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [levelFilter, setLevelFilter] = useState("all");
-  const [strengthFilter, setStrengthFilter] = useState("all");
-  const [focusFilter, setFocusFilter] = useState("all");
+  const [filterSaveMessage, setFilterSaveMessage] = useState("");
+  const [searchText, setSearchText] = useState(initialState.filter.searchText || "");
+  const [showFilterPanel, setShowFilterPanel] = useState(Boolean(initialState.filter.showFilterPanel));
+  const [statusFilter, setStatusFilter] = useState(initialState.filter.statusFilter || "all");
+  const [levelFilter, setLevelFilter] = useState(initialState.filter.levelFilter || "all");
+  const [strengthFilter, setStrengthFilter] = useState(initialState.filter.strengthFilter || "all");
+  const [focusFilter, setFocusFilter] = useState(initialState.filter.focusFilter || "all");
+
+  const buildCurrentReportFilter = () => ({
+    cls: selectedClass,
+    subj: selectedSubject,
+    topic: selectedTopic,
+    perPage: itemsPerPage,
+    searchText,
+    showFilterPanel,
+    statusFilter,
+    levelFilter,
+    strengthFilter,
+    focusFilter,
+  });
 
   const selectSnapshot = (className, topicId) => {
     const snapshot = readReportCache().snapshots[reportSnapshotKey(className, topicId)] || null;
@@ -128,24 +177,48 @@ export default function Report() {
   }, [searchText, statusFilter, levelFilter, strengthFilter, focusFilter, itemsPerPage]);
 
   useEffect(() => {
-    const markNewData = () => setHasNewData(true);
-    window.addEventListener("atl-data-updated", markNewData);
-    return () => window.removeEventListener("atl-data-updated", markNewData);
-  }, []);
+    let cancelled = false;
+    if (!selectedClass || !selectedTopic) {
+      setFallbackStudents([]);
+      setFallbackLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setFallbackLoading(true);
+    getStudents(selectedClass)
+      .then((students) => {
+        if (cancelled) return;
+        setFallbackStudents(Array.isArray(students) ? students : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFallbackStudents([]);
+      })
+      .finally(() => {
+        if (!cancelled) setFallbackLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClass, selectedTopic]);
 
   const handleUpdateData = async () => {
     if (!selectedClass || !selectedTopic || isUpdating) return;
     setIsUpdating(true);
     setUpdateError("");
     try {
-      const [classesResult, topicsResult, userResult, reportResult] = await Promise.allSettled([
+      const [classesResult, topicsResult, userResult] = await Promise.allSettled([
         getClasses(),
         getTopics(),
         getCurrentUser(),
-        getReport(selectedClass, selectedTopic),
       ]);
       const cache = readReportCache();
       const nextCatalog = { ...(cache.catalog || {}) };
+      let reportSubject = selectedSubject;
+      let reportTopic = selectedTopic;
       if (classesResult.status === "fulfilled") {
         const labels = classesResult.value.map((item) => item.displayName || item.display_name || item.code).filter(Boolean);
         setClassOptions(labels);
@@ -153,7 +226,16 @@ export default function Report() {
       }
       if (topicsResult.status === "fulfilled") {
         const user = userResult.status === "fulfilled" ? userResult.value : currentUser;
-        const accessibleSubjects = filterSubjectsByUserAccess(topicsResult.value || [], user);
+        const accessibleSubjects = reportReadySubjects(filterSubjectsByUserAccess(topicsResult.value || [], user));
+        const selectedSubjectData = accessibleSubjects.find((subject) => subject.id === selectedSubject);
+        const selectedTopicIsReady = selectedSubjectData?.topics?.some((topic) => topic.id === selectedTopic);
+        if (!selectedTopicIsReady) {
+          const fallback = firstReportSelection(accessibleSubjects);
+          reportSubject = fallback.subjectId;
+          reportTopic = fallback.topicId;
+          setSelectedSubject(reportSubject);
+          setSelectedTopic(reportTopic);
+        }
         setCurrentUser(user);
         setSubjects(accessibleSubjects);
         nextCatalog.subjects = accessibleSubjects;
@@ -162,14 +244,24 @@ export default function Report() {
         nextCatalog.updatedAt = new Date().toISOString();
       }
 
+      if (!reportTopic) {
+        setApiReport(null);
+        setSnapshotUpdatedAt("");
+        setHasNewData(false);
+        setUpdateError("Belum ada mapel/subtopik yang memiliki kriteria untuk ditampilkan di Report.");
+        writeReportCache({ ...cache, catalog: nextCatalog });
+        return;
+      }
+
+      const reportResult = await Promise.allSettled([getReport(selectedClass, reportTopic)]).then(([result]) => result);
       if (reportResult.status === "fulfilled") {
         const updatedAt = new Date().toISOString();
-        const key = reportSnapshotKey(selectedClass, selectedTopic);
+        const key = reportSnapshotKey(selectedClass, reportTopic);
         const nextCache = {
           ...cache,
           version: REPORT_CACHE_VERSION,
           catalog: nextCatalog,
-          lastFilter: { cls: selectedClass, subj: selectedSubject, topic: selectedTopic, perPage: itemsPerPage },
+          lastFilter: { ...buildCurrentReportFilter(), subj: reportSubject, topic: reportTopic },
           snapshots: trimSnapshots({
             ...(cache.snapshots || {}),
             [key]: { report: reportResult.value, updatedAt },
@@ -182,7 +274,7 @@ export default function Report() {
         setHasNewData(false);
       } else {
         writeReportCache({ ...cache, catalog: nextCatalog });
-        setUpdateError("Update gagal, menampilkan snapshot terakhir. Pastikan backend aktif lalu coba lagi.");
+        setUpdateError("Update gagal, menampilkan snapshot terakhir. Pastikan mapel/subtopik sudah memiliki kriteria.");
       }
     } catch {
       setUpdateError("Update gagal, menampilkan snapshot terakhir. Cache browser tidak dapat diperbarui.");
@@ -192,19 +284,38 @@ export default function Report() {
   };
 
   useEffect(() => {
+    const refreshNewData = () => {
+      setHasNewData(true);
+      window.setTimeout(() => {
+        handleUpdateData();
+      }, 0);
+    };
+    window.addEventListener("atl-data-updated", refreshNewData);
+    return () => window.removeEventListener("atl-data-updated", refreshNewData);
+  }, [selectedClass, selectedTopic, isUpdating]);
+
+  useEffect(() => {
     let cancelled = false;
     getCurrentUser().then((user) => {
       if (cancelled) return;
-      const accessibleSubjects = filterSubjectsByUserAccess(subjects, user);
+      const accessibleSubjects = reportReadySubjects(filterSubjectsByUserAccess(subjects, user));
       setCurrentUser(user);
       if (accessibleSubjects.length > 0) {
         setSubjects(accessibleSubjects);
-        if (!accessibleSubjects.some((subject) => subject.id === selectedSubject)) {
-          const nextSubject = accessibleSubjects[0];
-          const nextTopic = nextSubject.topics?.[0]?.id || "";
-          setSelectedSubject(nextSubject.id);
-          setSelectedTopic(nextTopic);
-          selectSnapshot(selectedClass, nextTopic);
+        const selectedSubjectData = accessibleSubjects.find((subject) => subject.id === selectedSubject);
+        const selectedTopicIsReady = selectedSubjectData?.topics?.some((topic) => topic.id === selectedTopic);
+        if (!selectedTopicIsReady) {
+          const nextSelection = firstReportSelection(accessibleSubjects);
+          setSelectedSubject(nextSelection.subjectId);
+          setSelectedTopic(nextSelection.topicId);
+          selectSnapshot(selectedClass, nextSelection.topicId);
+        }
+      } else {
+        setSubjects([]);
+        if (selectedSubject || selectedTopic) {
+          setSelectedSubject("");
+          setSelectedTopic("");
+          selectSnapshot(selectedClass, "");
         }
       }
     });
@@ -277,6 +388,38 @@ const scoreLevel = getScoreLevel;
       .replace(/\bNFI\b/g, "Need Further Improvement")
   );
   const atlCategoryOrder = ["Thinking Skills", "Research Skills", "Communication Skills", "Social Skills", "Self-Management Skills"];
+  const fallbackReportRows = useMemo(() => {
+    const noDataLevel = getNoDataLevel();
+    const emptyCategoryMap = atlCategoryOrder.reduce((acc, category) => ({ ...acc, [category]: 0 }), {});
+    return fallbackStudents.map((student) => {
+      const name = student.name || student.fullName || student.full_name || "-";
+      return {
+        ...student,
+        id: student.id,
+        nis: student.nis || student.id || "-",
+        name,
+        className: student.className || selectedClass,
+        score: 0,
+        rawScore: 0,
+        predikat: "No Data",
+        progress: "-",
+        catAverages: emptyCategoryMap,
+        categoryScores: emptyCategoryMap,
+        detailItems: [],
+        assessedCount: 0,
+        totalIndicators: 0,
+        atlLevel: noDataLevel,
+        atlCategoryScores: atlCategoryOrder.map((category) => ({
+          name: category,
+          score: 0,
+          assessedIndicators: 0,
+          level: noDataLevel,
+        })),
+        summaryParagraph: `${name} belum memiliki data penilaian ATL untuk ${currentSubject?.label || selectedSubject} (${currentTopicLabel}).`,
+        teacherInsight: `${name} belum memiliki catatan penilaian ATL untuk ${currentSubject?.label || selectedSubject} (${currentTopicLabel}).`,
+      };
+    });
+  }, [atlCategoryOrder, currentSubject, currentTopicLabel, fallbackStudents, selectedClass, selectedSubject]);
   const exportColumns = [
     { key: "no", label: "NO" },
     { key: "className", label: "CLASS" },
@@ -294,16 +437,13 @@ const scoreLevel = getScoreLevel;
 
   // Data mentah kalkulasi (Skor & Kategori)
   const allCalculatedData = useMemo(() => {
-    if (Array.isArray(apiReport?.students)) return apiReport.students;
-    return [];
-  }, [apiReport]);
+    if (Array.isArray(apiReport?.students) && apiReport.students.length > 0) return apiReport.students;
+    return fallbackReportRows;
+  }, [apiReport, fallbackReportRows]);
 
   const categoryFilterOptions = atlCategoryOrder;
   const levelFilterOptions = ["EE", "ME", "DE", "PTE", "NFI", "No Data"];
-  const getStudentCategoryValue = (student, categoryName) => {
-    const value = Number(student?.catAverages?.[categoryName] ?? 0);
-    return Number.isFinite(value) ? value : 0;
-  };
+  const getStudentCategoryValue = (student, categoryName) => getStudentATLCategoryScore(student, categoryName) || 0;
   const getStudentStrongestCategory = (student) => (
     [...atlCategoryOrder]
       .map((category) => ({ category, score: getStudentCategoryValue(student, category) }))
@@ -507,11 +647,36 @@ const scoreLevel = getScoreLevel;
       .replace(/^_+|_+$/g, "")
   );
 
+  function getStudentATLCategoryScore(student, categoryName) {
+    const normalizedCategory = normalizeATLCategory(categoryName);
+    const readCategoryMap = (map = {}) => {
+      for (const [key, raw] of Object.entries(map || {})) {
+        if (normalizeATLCategory(key) !== normalizedCategory) continue;
+        const numeric = Number(raw);
+        if (Number.isFinite(numeric) && numeric > 0) return numeric;
+      }
+      return null;
+    };
+
+    const directScore = readCategoryMap(student?.categoryScores);
+    if (directScore !== null) return directScore;
+
+    const averageScore = readCategoryMap(student?.catAverages);
+    if (averageScore !== null) return averageScore;
+
+    const categoryRows = Array.isArray(student?.atlCategoryScores)
+      ? student.atlCategoryScores
+      : buildATLCategoryScores(student?.detailItems || [], {});
+    const categoryRow = categoryRows.find((row) => normalizeATLCategory(row.name || row.category) === normalizedCategory);
+    const rowScore = Number(categoryRow?.score ?? categoryRow?.val);
+    if (Number.isFinite(rowScore) && rowScore > 0) return rowScore;
+
+    return null;
+  }
+
   const getCategoryExportValue = (student, categoryName) => {
-    const raw = student.catAverages?.[categoryName];
-    if (raw === undefined || raw === null || raw === "" || Number(raw) === 0) return "-";
-    const numeric = Number(raw);
-    return Number.isFinite(numeric) ? Number(numeric.toFixed(2)) : raw;
+    const numeric = getStudentATLCategoryScore(student, categoryName);
+    return numeric === null ? "-" : Number(numeric.toFixed(2));
   };
 
   const getPerformanceDisplay = (student, mode = "short") => {
@@ -571,14 +736,23 @@ const scoreLevel = getScoreLevel;
     const score = Number(student.score || student.rawScore || 0);
     const level = scoreLevel(score);
     const assessed = (detailItems || []).filter((item) => item.ratingCode);
-    const strong = assessed.filter((item) => ["EE", "ME"].includes(item.ratingCode));
-    const focus = assessed.filter((item) => ["DE", "PTE", "NFI"].includes(item.ratingCode));
-    const uniqueNames = (items) => [...new Set(items.map((item) => item.atlName || item.kriteria).filter(Boolean))].slice(0, 2).join(", ");
-    const evidence = assessed.find((item) => item.levelDescription)?.levelDescription;
+    const scoredItems = assessed
+      .map((item, index) => ({ item, index, score: ratingNumericMap[item.ratingCode] }))
+      .filter((row) => Number.isFinite(row.score));
+    const strongest = scoredItems.reduce((best, row) => (!best || row.score > best.score ? row : best), null)?.item;
+    const focus = scoredItems.reduce((worst, row) => (!worst || row.score < worst.score ? row : worst), null)?.item;
+    const insightLabel = (item) => {
+      if (!item) return "";
+      const atlName = item.atlName || "";
+      const criteria = item.kriteria || "";
+      if (atlName && criteria) return `${atlName} pada kriteria ${criteria}`;
+      return atlName || criteria;
+    };
+    const teacherNotes = [...new Set((detailItems || []).map((item) => String(item.teacherNote || item.teacher_note || "").trim()).filter(Boolean))];
     let text = `${student.name} berada pada level ${getScoreDisplayLabel(level)} dalam ${currentSubject?.label || selectedSubject} (${currentTopicLabel}) dengan skor ATL ${score.toFixed(2)}, berdasarkan ${assessedCount}/${totalIndicators} indikator softskill ATL yang sudah dinilai.`;
-    if (uniqueNames(strong)) text += ` Kekuatan utama tampak pada ${uniqueNames(strong)}.`;
-    if (uniqueNames(focus)) text += ` Area yang perlu diperkuat adalah ${uniqueNames(focus)}.`;
-    if (evidence) text += ` Catatan rubric utama: ${evidence}`;
+    if (insightLabel(strongest)) text += ` Paling dikuasai: ${insightLabel(strongest)}.`;
+    if (insightLabel(focus)) text += ` Perlu dipelajari lebih lanjut: ${insightLabel(focus)}.`;
+    if (teacherNotes.length) text += ` Catatan guru: ${teacherNotes.join(" ")}`;
     return text;
   }
 
@@ -626,8 +800,16 @@ const scoreLevel = getScoreLevel;
         icon: "database",
       };
     }
-    return { label: "Belum diperbarui. Grafik nol belum mewakili data backend.", tone: "border-stone-200 bg-stone-50 text-stone-600", icon: "info" };
-  }, [hasNewData, isUpdating, snapshotUpdatedAt, updateError]);
+    if (fallbackLoading) return { label: "Mengambil daftar siswa saat ini...", tone: "border-blue-200 bg-blue-50 text-blue-700", icon: "sync" };
+    if (fallbackReportRows.length > 0) {
+      return {
+        label: "Menampilkan daftar siswa awal dengan status No Data. Tekan Update Data untuk sinkronisasi report backend.",
+        tone: "border-stone-200 bg-stone-50 text-stone-600",
+        icon: "info",
+      };
+    }
+    return { label: "Daftar siswa belum tersedia untuk filter saat ini.", tone: "border-stone-200 bg-stone-50 text-stone-600", icon: "info" };
+  }, [fallbackLoading, fallbackReportRows.length, hasNewData, isUpdating, snapshotUpdatedAt, updateError]);
 
   const excelFilename = useMemo(() => (
     `ATL_Report_${safeFilePart(selectedClass)}_${safeFilePart(currentSubject?.label || selectedSubject)}_${safeFilePart(currentTopicLabel)}.xlsx`
@@ -659,6 +841,20 @@ const scoreLevel = getScoreLevel;
     setExportError("");
     setExcelPreviewRows(rows);
     setShowExcelPreview(true);
+  };
+
+  const handleSaveDefaultFilter = () => {
+    const nextFilter = buildCurrentReportFilter();
+    const cache = readReportCache();
+    writeReportCache({
+      ...cache,
+      version: REPORT_CACHE_VERSION,
+      lastFilter: nextFilter,
+    });
+    localStorage.setItem("report_filter_pref", JSON.stringify(nextFilter));
+    setExportError("");
+    setFilterSaveMessage("Default tampilan report disimpan.");
+    window.setTimeout(() => setFilterSaveMessage(""), 2400);
   };
 
   const handleDownloadExcel = async () => {
@@ -848,7 +1044,7 @@ const scoreLevel = getScoreLevel;
                 </p>
               </div>
 
-              <div className="grid gap-3 lg:grid-cols-3 xl:grid-cols-[1fr_1fr_1fr_auto]">
+              <div className="grid gap-3 lg:grid-cols-3 xl:grid-cols-[1fr_1fr_1fr_auto_auto]">
                 <select
                   value={selectedClass}
                   onChange={(e) => {
@@ -899,7 +1095,20 @@ const scoreLevel = getScoreLevel;
                   <span className="material-symbols-outlined text-[18px]">download</span>
                   Export Excel
                 </button>
+                <button
+                  type="button"
+                  onClick={handleSaveDefaultFilter}
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-primary px-5 text-sm font-black text-white shadow-sm transition hover:bg-secondary"
+                >
+                  <span className="material-symbols-outlined text-[18px]">bookmark</span>
+                  Simpan Default
+                </button>
               </div>
+              {filterSaveMessage && (
+                <p className="mt-2 inline-flex rounded-lg bg-primary/10 px-3 py-1 text-xs font-black text-primary">
+                  {filterSaveMessage}
+                </p>
+              )}
 
               <div className="mt-3 flex flex-col gap-3 border-t border-stone-200 pt-3 lg:flex-row lg:items-center lg:justify-between">
                 <label className="relative block min-w-0 flex-1">
@@ -1197,8 +1406,12 @@ const scoreLevel = getScoreLevel;
                       <tr>
                         <td colSpan={6} className="px-5 py-14 text-center">
                           <span className="material-symbols-outlined text-5xl text-stone-300">manage_search</span>
-                          <p className="mt-3 text-sm font-black text-stone-700">Tidak ada siswa sesuai filter saat ini.</p>
-                          <p className="mt-1 text-xs font-semibold text-stone-400">Ubah kata kunci atau reset filter untuk melihat data report.</p>
+                          <p className="mt-3 text-sm font-black text-stone-700">
+                            {fallbackLoading ? "Mengambil daftar siswa saat ini..." : "Tidak ada siswa sesuai filter saat ini."}
+                          </p>
+                          <p className="mt-1 text-xs font-semibold text-stone-400">
+                            {fallbackLoading ? "Tabel akan terisi otomatis setelah daftar siswa tersedia." : "Ubah kata kunci atau reset filter untuk melihat data report."}
+                          </p>
                         </td>
                       </tr>
                     )}

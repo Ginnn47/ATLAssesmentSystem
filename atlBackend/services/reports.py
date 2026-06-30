@@ -16,25 +16,49 @@ def score_band_display(label):
     return normalized
 
 
+def _format_insight_item(item):
+    if not item:
+        return ""
+    atl_name = item.get("atlName") or ""
+    criteria = item.get("kriteria") or ""
+    if atl_name and criteria:
+        return f"{atl_name} pada kriteria {criteria}"
+    return atl_name or criteria
+
+
+def _teacher_notes(detail_items):
+    notes = []
+    for item in detail_items:
+        note = (item.get("teacherNote") or item.get("teacher_note") or "").strip()
+        if note and note not in notes:
+            notes.append(note)
+    return notes
+
+
 def build_teacher_insight(name, subject_label, topic_label, score, detail_items, assessed_count, total_indicators):
     assessed = [item for item in detail_items if item.get("ratingCode")]
     level = score_level(score)
-    strong = [item for item in assessed if item.get("ratingCode") in {"EE", "ME"}]
-    focus = [item for item in assessed if item.get("ratingCode") in {"DE", "PTE", "NFI"}]
-    strong_text = ", ".join(dict.fromkeys((item.get("atlName") or item.get("kriteria") or "") for item in strong[:2] if item.get("atlName") or item.get("kriteria")))
-    focus_text = ", ".join(dict.fromkeys((item.get("atlName") or item.get("kriteria") or "") for item in focus[:2] if item.get("atlName") or item.get("kriteria")))
-    evidence = next((item.get("levelDescription") for item in assessed if item.get("levelDescription")), "")
+    scored_items = [
+        (rating_score(item.get("ratingCode")), index, item)
+        for index, item in enumerate(assessed)
+        if rating_score(item.get("ratingCode")) is not None
+    ]
+    strongest_item = max(scored_items, key=lambda row: (row[0], -row[1]))[2] if scored_items else None
+    focus_item = min(scored_items, key=lambda row: (row[0], row[1]))[2] if scored_items else None
+    strong_text = _format_insight_item(strongest_item)
+    focus_text = _format_insight_item(focus_item)
+    notes = _teacher_notes(detail_items)
     level_label = level.get("fullLabel") or level.get("description") or level["label"]
     sentence = (
         f"{name} berada pada level {level_label} dalam {subject_label} ({topic_label}) dengan skor ATL {float(score or 0):.2f}, "
         f"berdasarkan {assessed_count}/{total_indicators} indikator softskill ATL yang sudah dinilai."
     )
     if strong_text:
-        sentence += f" Kekuatan utama tampak pada {strong_text}."
+        sentence += f" Paling dikuasai: {strong_text}."
     if focus_text:
-        sentence += f" Area yang perlu diperkuat adalah {focus_text}."
-    if evidence:
-        sentence += f" Catatan rubric utama: {evidence}"
+        sentence += f" Perlu dipelajari lebih lanjut: {focus_text}."
+    if notes:
+        sentence += f" Catatan guru: {' '.join(notes)}"
     return sentence
 
 

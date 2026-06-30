@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "./sidebar";
 import { getCurrentUser, getDashboardAnalytics } from "../../services/atlApi";
-import { ROLE_CODES, getUserRoleCodes, isAdminUser } from "../../services/accessControl";
+import { ROLE_CODES, getGrantedFeatures, getUserRoleCodes, getUserRoleNames, isAdminUser } from "../../services/accessControl";
 import { getATLDistributionTemplate, getNoDataLevel } from "../../services/labelRegistry";
 import posterFuzzy from "../../assets/posterFuzzy.png";
 
@@ -28,6 +28,7 @@ const emptyDashboard = {
     { label: "Topik Aktif", value: "0", note: "Topik pembelajaran yang sudah memiliki assessment.", icon: "auto_stories", color: "violet" },
   ],
   atlDistribution: getATLDistributionTemplate(),
+  analysisScopes: [],
   trend: [
     { label: "Minggu 1", score: 0 },
     { label: "Minggu 2", score: 0 },
@@ -109,12 +110,78 @@ const formatTime = (value) => {
   }).format(date);
 };
 
+const normalizeToken = (value) => String(value || "").trim().toLowerCase();
+
+const matchesClassAccess = (className, access = []) => {
+  if (!access.length) return true;
+  const normalizedClass = normalizeToken(className);
+  const classCode = normalizeToken(String(className || "").split(" - ")[0]);
+  return access.some((item) => {
+    const normalizedAccess = normalizeToken(item);
+    return normalizedAccess === normalizedClass || normalizedAccess === classCode;
+  });
+};
+
+const matchesSubjectAccess = (scope, access = []) => {
+  if (!access.length) return true;
+  const subjectCode = normalizeToken(scope.subjectCode);
+  const subjectLabel = normalizeToken(scope.subjectLabel);
+  return access.some((item) => {
+    const normalizedAccess = normalizeToken(item);
+    return normalizedAccess === subjectCode || normalizedAccess === subjectLabel;
+  });
+};
+
+const buildAnalysisScopeOptions = ({ dashboard, roleCodes, isAdminDashboard, classAccess, subjectAccess }) => {
+  const scopes = Array.isArray(dashboard.analysisScopes) ? dashboard.analysisScopes : [];
+  const fallback = {
+    key: "all",
+    label: "Semua Kelas",
+    type: "all",
+    distribution: dashboard.atlDistribution || [],
+    average: dashboard.summary?.average || 0,
+    completion: dashboard.summary?.completion || 0,
+    assessedStudents: dashboard.summary?.assessedStudents || 0,
+    totalStudents: dashboard.summary?.totalStudents || 0,
+    strongestATL: dashboard.summary?.strongestATL || "-",
+    focusATL: dashboard.summary?.focusATL || "-",
+  };
+  const allScope = scopes.find((scope) => scope.key === "all") || fallback;
+  const classScopes = scopes.filter((scope) => scope.type === "class");
+  const subjectScopes = scopes.filter((scope) => scope.type === "subject");
+  const classSubjectScopes = scopes.filter((scope) => scope.type === "class-subject");
+
+  if (isAdminDashboard || roleCodes.includes(ROLE_CODES.ATL_EXPERT)) {
+    return [
+      allScope,
+      ...classScopes,
+      ...subjectScopes,
+      ...classSubjectScopes,
+    ];
+  }
+
+  if (roleCodes.includes(ROLE_CODES.SUBJECT_COORDINATOR)) {
+    const options = classSubjectScopes.filter(
+      (scope) => matchesClassAccess(scope.className, classAccess) && matchesSubjectAccess(scope, subjectAccess)
+    );
+    return options.length ? options : subjectScopes.filter((scope) => matchesSubjectAccess(scope, subjectAccess));
+  }
+
+  if (roleCodes.includes(ROLE_CODES.HOMEROOM)) {
+    const options = classScopes.filter((scope) => matchesClassAccess(scope.className, classAccess));
+    return options.length ? options : [allScope];
+  }
+
+  return [allScope];
+};
+
 const mergeDashboardData = (data) => {
   if (!data?.summary) return emptyDashboard;
   const merged = { ...emptyDashboard, ...data, summary: { ...emptyDashboard.summary, ...(data.summary || {}) } };
   [
     "overviewCards",
     "atlDistribution",
+    "analysisScopes",
     "trend",
     "classComparison",
     "teacherMonitoring",
@@ -158,15 +225,15 @@ const DonutChart = ({ rows }) => {
     .join(", ");
 
   return (
-    <div className="grid gap-6 md:grid-cols-[220px_1fr]">
+    <div className="grid gap-8 xl:grid-cols-[320px_1fr]">
       <div className="flex items-center justify-center">
         <div
-          className="relative size-56 rounded-full"
+          className="relative size-72 rounded-full"
           style={{ background: `conic-gradient(${gradient || "#e7e5e4 0% 100%"})` }}
         >
-          <div className="absolute inset-10 flex flex-col items-center justify-center rounded-full bg-white shadow-inner">
+          <div className="absolute inset-14 flex flex-col items-center justify-center rounded-full bg-white shadow-inner">
             <span className="text-xs font-black text-stone-500">Total</span>
-            <span className="text-2xl font-black text-stone-950">ATL</span>
+            <span className="text-3xl font-black text-stone-950">ATL</span>
           </div>
         </div>
       </div>
@@ -240,12 +307,225 @@ const ClassBarChart = ({ rows }) => {
   );
 };
 
+const ATLAnalysisSection = ({ dashboard, insight, scopeOptions = [], selectedScopeKey, onScopeChange, scopeNote = "" }) => {
+  const fallbackScope = {
+    key: "all",
+    label: "Semua Kelas",
+    distribution: dashboard.atlDistribution || [],
+    average: dashboard.summary?.average || 0,
+    completion: dashboard.summary?.completion || 0,
+    assessedStudents: dashboard.summary?.assessedStudents || 0,
+    totalStudents: dashboard.summary?.totalStudents || 0,
+    strongestATL: dashboard.summary?.strongestATL || "-",
+    focusATL: dashboard.summary?.focusATL || "-",
+  };
+  const scopes = scopeOptions.length ? scopeOptions : [fallbackScope];
+  const activeScope = scopes.find((scope) => scope.key === selectedScopeKey) || scopes[0] || fallbackScope;
+  const distribution = activeScope.distribution || fallbackScope.distribution;
+  const detailItems = [
+    ["Average ATL", activeScope.average ?? 0],
+    ["Completion", `${activeScope.completion ?? 0}%`],
+    ["Siswa Dinilai", `${activeScope.assessedStudents ?? 0}/${activeScope.totalStudents ?? 0}`],
+  ];
+
+  return (
+    <section className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="text-lg font-black text-stone-950">Analisis ATL</h2>
+          <p className="mt-2 text-sm font-semibold text-stone-500">Distribusi ATL berdasarkan lingkup data yang sedang dianalisis.</p>
+        </div>
+        <div className="w-full max-w-xs">
+          <label className="text-[10px] font-black uppercase tracking-widest text-stone-400">Lingkup Analisis</label>
+          {scopes.length > 1 ? (
+            <select
+              value={activeScope.key}
+              onChange={(event) => onScopeChange?.(event.target.value)}
+              className="mt-2 w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-xs font-black text-stone-700 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10"
+            >
+              {scopes.map((scope) => (
+                <option key={scope.key} value={scope.key}>{scope.label}</option>
+              ))}
+            </select>
+          ) : (
+            <div className="mt-2 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs font-black text-stone-700">
+              {activeScope.label}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-7 rounded-[1.35rem] border border-stone-200 p-6">
+        <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <h3 className="text-sm font-black text-stone-950">Distribusi Rata-rata ATL</h3>
+          <span className="w-fit rounded-full bg-primary/10 px-3 py-1 text-[10px] font-black text-primary">{activeScope.label}</span>
+        </div>
+        <DonutChart rows={distribution} />
+      </div>
+
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
+        {detailItems.map(([label, value]) => (
+          <div key={label} className="rounded-2xl border border-stone-200 bg-stone-50 px-5 py-4">
+            <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">{label}</p>
+            <p className="mt-2 text-xl font-black text-stone-950">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_0.9fr]">
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
+          <span className="material-symbols-outlined text-primary">emoji_objects</span>
+          <div>
+            <p className="text-sm font-black text-stone-950">Insight Utama</p>
+            <p className="mt-1 text-xs font-semibold leading-5 text-stone-600">{insight}</p>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-stone-200 bg-white px-5 py-4">
+          <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Detail Lingkup</p>
+          <p className="mt-2 text-sm font-black text-stone-950">Terkuat: {activeScope.strongestATL || "-"}</p>
+          <p className="mt-1 text-sm font-black text-stone-950">Perlu Fokus: {activeScope.focusATL || "-"}</p>
+          {scopeNote && <p className="mt-2 text-xs font-semibold leading-5 text-stone-500">{scopeNote}</p>}
+        </div>
+      </div>
+    </section>
+  );
+};
+
+const AttentionStudentsCard = ({ students = [], title = "Siswa Perlu Perhatian" }) => (
+  <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+    <h2 className="text-base font-black text-stone-950">{title}</h2>
+    <p className="mt-2 text-xs font-semibold text-stone-500">Siswa yang memerlukan pendampingan lebih lanjut.</p>
+    <div className="mt-5 space-y-4">
+      {students.length > 0 ? (
+        students.map((student, index) => (
+          <div key={student.id || index} className="flex items-center gap-3">
+            <div className="flex size-9 items-center justify-center rounded-full bg-amber-100 text-xs font-black text-primary">
+              {(student.name || "?").split(" ").map((part) => part[0]).slice(0, 2).join("")}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-black text-stone-900">{student.name}</p>
+              <p className="text-[10px] font-semibold text-stone-400">{student.className || student.class || "Kelas aktif"}</p>
+              <div className="mt-1 h-2 rounded-full bg-stone-100">
+                <div className="h-full rounded-full bg-amber-300" style={{ width: `${student.score || 0}%` }} />
+              </div>
+            </div>
+            <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black text-primary">Perhatian</span>
+          </div>
+        ))
+      ) : (
+        <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center">
+          <span className="material-symbols-outlined text-3xl text-stone-400">verified</span>
+          <p className="mt-2 text-xs font-black text-stone-700">Belum ada siswa prioritas</p>
+          <p className="mt-1 text-[11px] font-semibold text-stone-500">Data akan muncul setelah nilai ATL tersimpan.</p>
+        </div>
+      )}
+    </div>
+  </div>
+);
+
+const TeacherMonitoringCard = ({ rows = [] }) => (
+  <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+    <h2 className="text-base font-black text-stone-950">Monitor Penilaian Guru</h2>
+    <p className="mt-2 text-xs font-semibold text-stone-500">Progress input penilaian ATL oleh guru.</p>
+    <div className="mt-5 space-y-4">
+      {rows.length > 0 ? rows.map((teacher) => (
+        <div key={teacher.name} className="flex items-center gap-3">
+          <div className="flex size-9 items-center justify-center rounded-full bg-stone-100 text-stone-500">
+            <span className="material-symbols-outlined text-lg">person</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-black text-stone-900">{teacher.name}</p>
+            <p className="mt-0.5 text-[10px] font-semibold text-stone-500">{teacher.role || "Pengajar"} | {teacher.assessmentCount || 0} input</p>
+            <div className="mt-1 h-2 rounded-full bg-stone-100">
+              <div className="h-full rounded-full" style={{ width: `${teacher.progress}%`, backgroundColor: teacher.color }} />
+            </div>
+          </div>
+          <span className="text-xs font-black text-stone-500">{teacher.progress || 0}%</span>
+        </div>
+      )) : (
+        <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center">
+          <span className="material-symbols-outlined text-3xl text-stone-400">assignment_late</span>
+          <p className="mt-2 text-xs font-black text-stone-700">Belum ada input guru</p>
+          <p className="mt-1 text-[11px] font-semibold text-stone-500">Progress akan muncul setelah guru menyimpan penilaian.</p>
+        </div>
+      )}
+    </div>
+  </div>
+);
+
+const RecentActivityCompact = ({ activities = [] }) => {
+  const rows = activities.slice(0, 4);
+  return (
+    <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+      <h2 className="text-base font-black text-stone-950">Aktivitas Terbaru</h2>
+      <p className="mt-2 text-xs font-semibold text-stone-500">Siapa yang melakukan perubahan dan lokasi aktivitasnya.</p>
+      <div className="mt-5 divide-y divide-stone-100">
+        {rows.length > 0 ? rows.map((activity, index) => {
+          const actor = activity.actor || activity.user || activity.evaluator || "Sistem ATL";
+          const location = String(activity.title || activity.type || "-").replace(/^Nilai\s+/i, "");
+          return (
+            <div key={`${activity.title}-${index}`} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <span className="material-symbols-outlined text-[18px]">history</span>
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-black text-stone-900">{actor}</p>
+                <p className="truncate text-[11px] font-semibold text-stone-500">{location}</p>
+              </div>
+              <span className="text-[10px] font-bold text-stone-400">{formatTime(activity.time)}</span>
+            </div>
+          );
+        }) : (
+          <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center text-xs font-bold text-stone-500">
+            Belum ada aktivitas terbaru.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const ATLFlowBanner = ({ open, onToggle }) => (
+  <section className="relative overflow-hidden rounded-[1.6rem] border border-amber-100 bg-gradient-to-r from-amber-50 via-white to-amber-100 p-7">
+    <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+      <div className="flex items-center gap-5">
+        <div className="flex size-16 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary md:size-20">
+          <span className="material-symbols-outlined text-4xl md:text-5xl">school</span>
+        </div>
+        <div>
+          <h2 className="text-lg font-black text-stone-950">Alur penilaian ATL dalam sistem</h2>
+          <p className="mt-2 max-w-2xl text-xs font-semibold leading-5 text-stone-600">
+            Penilaian dimulai dari input rubrik, pembobotan Fuzzy-AHP, agregasi nilai, review akademik, lalu laporan ATL yang siap digunakan.
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="rounded-xl border border-primary/40 bg-white px-5 py-3 text-xs font-black text-primary transition hover:bg-primary/5"
+      >
+        {open ? "Sembunyikan Poster" : "Pelajari Lebih Lanjut"}
+      </button>
+    </div>
+    {open && (
+      <div className="mt-6 overflow-auto rounded-[1.4rem] border border-amber-200 bg-white p-3 shadow-inner lg:p-5">
+        <img
+          src={posterFuzzy}
+          alt="Poster alur penilaian Fuzzy-AHP ATL"
+          className="mx-auto min-w-[920px] max-w-none rounded-2xl object-contain shadow-[0_18px_42px_rgba(15,23,42,0.16)] lg:min-w-0 lg:w-full"
+        />
+      </div>
+    )}
+  </section>
+);
+
 export default function Dashboard() {
   const [dashboard, setDashboard] = useState(emptyDashboard);
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [backendError, setBackendError] = useState("");
   const [showFlowPoster, setShowFlowPoster] = useState(false);
+  const [analysisScopeKey, setAnalysisScopeKey] = useState("all");
 
   const loadDashboard = async () => {
     setLoading(true);
@@ -303,13 +583,243 @@ export default function Dashboard() {
   const overviewCards = isAdminDashboard ? adminOverviewCards : evaluatorOverviewCards;
   const dashboardTitle = isAdminDashboard ? "Monitoring Sistem ATL" : "Dashboard Pekerjaan Guru";
   const dashboardSubtitle = isAdminDashboard
-    ? "Pantau user, data akademik, cakupan assessment, dan status konfigurasi sistem."
+    ? "Pantau user, data akademik, monitor penilaian guru, dan status konfigurasi sistem."
     : "Pantau kelas, progress assessment, siswa prioritas, dan insight penilaian.";
   const insight = useMemo(() => {
     const focus = summary.focusATL || "-";
     const strongest = summary.strongestATL || "-";
     return `Siswa menunjukkan kekuatan pada aspek ${strongest}, namun masih perlu peningkatan konsistensi pada ${focus}.`;
   }, [summary.focusATL, summary.strongestATL]);
+
+  const roleNames = getUserRoleNames(currentUser);
+  const grantedFeatures = getGrantedFeatures(currentUser);
+  const classAccess = Array.isArray(currentUser?.classAccess) ? currentUser.classAccess : [];
+  const subjectAccess = Array.isArray(currentUser?.subjectAccess) ? currentUser.subjectAccess : [];
+  const classScopeLabel = classAccess.length ? classAccess.join(", ") : "Semua Kelas";
+  const scopedAttentionStudents = (dashboard.attentionStudents || []).filter((student) => {
+    if (!classAccess.length) return true;
+    const className = student.className || student.class || "";
+    const classCode = String(className).split(" - ")[0];
+    return classAccess.includes(className) || classAccess.includes(classCode);
+  });
+  const roleDashboardCards = [
+    { label: "Role Aktif", value: roleNames[0] || currentUser?.roleLabel || "-", note: "Dashboard mengikuti role akun ini.", icon: "badge", color: "blue" },
+    { label: "Akses Kelas", value: classAccess.length || "-", note: classAccess.length ? classAccess.join(", ") : "Tidak dibatasi khusus.", icon: "home_work", color: "amber" },
+    { label: "Akses Mapel", value: subjectAccess.length || "-", note: subjectAccess.length ? subjectAccess.join(", ").toUpperCase() : "Tidak dibatasi khusus.", icon: "menu_book", color: "sky" },
+    { label: "Progress Sistem", value: `${summary.completion || 0}%`, note: "Ringkasan dari data assessment tersimpan.", icon: "fact_check", color: "green" },
+  ];
+  const roleFocusPanels = [
+    roleCodes.includes(ROLE_CODES.ACADEMIC) && {
+      title: "Fokus Akademik",
+      icon: "verified",
+      tone: "border-indigo-200 bg-indigo-50 text-indigo-700",
+      note: "Pantau validasi data akademik, akses user, dan kesiapan laporan. Dashboard full monitoring hanya tersedia untuk Admin.",
+    },
+    roleCodes.includes(ROLE_CODES.HOMEROOM) && {
+      title: "Fokus Wali Kelas",
+      icon: "groups",
+      tone: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      note: `Utamakan monitoring siswa pada kelas ${classAccess.join(", ") || "yang diampu"} dan cek siswa yang perlu perhatian.`,
+    },
+    roleCodes.includes(ROLE_CODES.SUBJECT_COORDINATOR) && {
+      title: "Fokus PJ Mapel",
+      icon: "poll",
+      tone: "border-amber-200 bg-amber-50 text-amber-700",
+      note: `Review report untuk mapel ${subjectAccess.join(", ").toUpperCase() || "yang diampu"} dan pastikan input nilai sudah lengkap.`,
+    },
+    roleCodes.includes(ROLE_CODES.ATL_EXPERT) && {
+      title: "Fokus ATL Expert",
+      icon: "hub",
+      tone: "border-violet-200 bg-violet-50 text-violet-700",
+      note: "Tinjau kriteria, pairwise comparison, dan bobot Fuzzy-AHP sebelum laporan digunakan.",
+    },
+  ].filter(Boolean);
+  const analysisScopeOptions = useMemo(
+    () => buildAnalysisScopeOptions({ dashboard, roleCodes, isAdminDashboard, classAccess, subjectAccess }),
+    [dashboard, roleCodes, isAdminDashboard, classAccess, subjectAccess]
+  );
+  useEffect(() => {
+    if (!analysisScopeOptions.length) return;
+    if (!analysisScopeOptions.some((scope) => scope.key === analysisScopeKey)) {
+      setAnalysisScopeKey(analysisScopeOptions[0].key);
+    }
+  }, [analysisScopeOptions, analysisScopeKey]);
+  const analysisScopeNote = roleCodes.includes(ROLE_CODES.SUBJECT_COORDINATOR)
+    ? `Fokus mapel: ${subjectAccess.join(", ").toUpperCase() || "mapel yang diampu"}. Pilihan kelas mengikuti akses PJ Mapel.`
+    : roleCodes.includes(ROLE_CODES.HOMEROOM)
+      ? `Dikunci ke kelas wali: ${classScopeLabel}.`
+      : "Admin dan ATL Expert dapat memilih semua kelas, kelas tertentu, mapel, atau kombinasi kelas-mapel.";
+
+  if (!isAdminDashboard) {
+    return (
+      <div className="flex h-screen w-full overflow-hidden bg-[#FBFAF7]">
+        <Sidebar />
+
+        <main className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto px-5 py-6 lg:px-8">
+            <div className="mx-auto flex max-w-[1080px] flex-col gap-7">
+              <header className="rounded-[1.8rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.22em] text-primary">Dashboard Role</p>
+                    <h1 className="mt-3 text-3xl font-black tracking-tight text-stone-950">
+                      Halo, {currentUser?.name || "User ATL"}
+                    </h1>
+                    <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-stone-500">
+                      Tampilan ini diringkas sesuai role akun. Semua halaman tetap bisa dibuka, sementara panel My Access menunjukkan cakupan akses sebenarnya.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-right">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Update Data</p>
+                    <p className="mt-1 text-sm font-black text-stone-800">{formatTime(dashboard.meta?.updatedAt)}</p>
+                  </div>
+                </div>
+              </header>
+
+              {backendError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
+                  <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
+                  {backendError}
+                </div>
+              )}
+
+              <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {roleDashboardCards.map((item) => <StatCard key={item.label} item={item} />)}
+              </section>
+
+              <section className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+                  <h2 className="text-lg font-black text-stone-950">My Access</h2>
+                  <p className="mt-2 text-sm font-semibold text-stone-500">Role dan scope akses yang tersimpan untuk akun ini.</p>
+                  <div className="mt-5 space-y-4">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Role</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {roleNames.map((role) => (
+                          <span key={role} className="rounded-full bg-primary/10 px-3 py-1 text-xs font-black text-primary">{role}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Fitur</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {grantedFeatures.map((feature) => (
+                          <span key={feature} className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1 text-xs font-black text-stone-700">{feature}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-500">Kelas</p>
+                        <p className="mt-2 text-sm font-black text-blue-900">{classAccess.join(", ") || "Semua / tidak dibatasi"}</p>
+                      </div>
+                      <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-amber-600">Mapel</p>
+                        <p className="mt-2 text-sm font-black uppercase text-amber-900">{subjectAccess.join(", ") || "Semua / tidak dibatasi"}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+                  <h2 className="text-lg font-black text-stone-950">Ringkasan Pekerjaan</h2>
+                  <p className="mt-2 text-sm font-semibold text-stone-500">Informasi utama untuk role akun ini.</p>
+                  <div className="mt-5 space-y-3">
+                    {roleFocusPanels.map((panel) => (
+                      <div key={panel.title} className={`rounded-2xl border p-4 ${panel.tone}`}>
+                        <div className="flex items-start gap-3">
+                          <span className="material-symbols-outlined text-[22px]">{panel.icon}</span>
+                          <div>
+                            <p className="text-sm font-black">{panel.title}</p>
+                            <p className="mt-1 text-xs font-semibold leading-5">{panel.note}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {roleFocusPanels.length === 0 && (
+                      <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4 text-sm font-semibold text-stone-500">
+                        Akun ini bisa melakukan input penilaian ATL dan melihat menu lain sesuai kebutuhan.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+                <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+                  <h2 className="text-lg font-black text-stone-950">Progress ATL</h2>
+                  <p className="mt-2 text-sm font-semibold text-stone-500">Ringkasan umum dari assessment yang tersimpan.</p>
+                  <div className="mt-6 grid gap-4 md:grid-cols-3">
+                    {[
+                      ["Siswa Dinilai", `${summary.assessedStudents || 0}/${summary.totalStudents || 0}`],
+                      ["Average ATL", summary.average || 0],
+                      ["Best Class", summary.bestClass || "-"],
+                    ].map(([label, value]) => (
+                      <div key={label} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">{label}</p>
+                        <p className="mt-2 text-xl font-black text-stone-950">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold leading-6 text-amber-800">
+                    {insight}
+                  </div>
+                </div>
+
+                <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
+                  <h2 className="text-lg font-black text-stone-950">Aksi Cepat</h2>
+                  <p className="mt-2 text-sm font-semibold text-stone-500">Menu tetap tersedia, pilih sesuai kebutuhan kerja.</p>
+                  <div className="mt-5 grid gap-3">
+                    {[
+                      ["edit_note", "Input Penilaian ATL", "Isi nilai detailed atau batch."],
+                      ["poll", "ATL Reports", "Lihat dan export hasil report."],
+                      ["assignment", "Criteria Management", "Review kriteria ATL."],
+                      ["tune", "Weight Management", "Kelola bobot Fuzzy-AHP."],
+                    ].map(([icon, title, note]) => (
+                      <div key={title} className="flex items-center gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-3">
+                        <span className="material-symbols-outlined text-primary">{icon}</span>
+                        <div>
+                          <p className="text-sm font-black text-stone-900">{title}</p>
+                          <p className="text-xs font-semibold text-stone-500">{note}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              {(roleCodes.includes(ROLE_CODES.HOMEROOM) || roleCodes.includes(ROLE_CODES.ATL_EXPERT) || roleCodes.includes(ROLE_CODES.SUBJECT_COORDINATOR)) && (
+                <ATLAnalysisSection
+                  dashboard={dashboard}
+                  insight={insight}
+                  scopeOptions={analysisScopeOptions}
+                  selectedScopeKey={analysisScopeKey}
+                  onScopeChange={setAnalysisScopeKey}
+                  scopeNote={analysisScopeNote}
+                />
+              )}
+
+              {roleCodes.includes(ROLE_CODES.HOMEROOM) && (
+                <AttentionStudentsCard
+                  students={scopedAttentionStudents}
+                  title={`Siswa Perlu Perhatian - ${classScopeLabel}`}
+                />
+              )}
+
+              <ATLFlowBanner
+                open={showFlowPoster}
+                onToggle={() => setShowFlowPoster((value) => !value)}
+              />
+
+              <footer className="pb-4 text-[11px] font-semibold text-stone-400">
+                <span>{loading ? "Memuat data dashboard..." : `Data diperbarui: ${formatTime(dashboard.meta?.updatedAt)}`}</span>
+              </footer>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[#FBFAF7]">
@@ -391,20 +901,7 @@ export default function Dashboard() {
                       ))}
                     </div>
                   </div>
-                  <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
-                    <h2 className="text-base font-black text-stone-950">Assessment Coverage</h2>
-                    <p className="mt-2 text-xs font-semibold text-stone-500">Cakupan kelas dan topik yang sudah dinilai.</p>
-                    <div className="mt-5 space-y-4">
-                      <div>
-                        <div className="mb-2 flex justify-between text-xs font-black text-stone-600"><span>Kelas dinilai</span><span>{summary.assessedClasses ?? "-"}/{summary.totalClasses ?? "-"}</span></div>
-                        <div className="h-2 rounded-full bg-stone-100"><div className="h-full rounded-full bg-primary" style={{ width: `${summary.classCoverage || 0}%` }} /></div>
-                      </div>
-                      <div>
-                        <div className="mb-2 flex justify-between text-xs font-black text-stone-600"><span>Topik dinilai</span><span>{summary.topicActive || 0}/{summary.totalActiveTopic || 0}</span></div>
-                        <div className="h-2 rounded-full bg-stone-100"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${summary.topicCoverage || 0}%` }} /></div>
-                      </div>
-                    </div>
-                  </div>
+                  <TeacherMonitoringCard rows={dashboard.teacherMonitoring || []} />
                   <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
                     <h2 className="text-base font-black text-stone-950">Configuration Status</h2>
                     <p className="mt-2 text-xs font-semibold text-stone-500">Status konfigurasi utama ATL.</p>
@@ -437,210 +934,28 @@ export default function Dashboard() {
               )}
             </section>
 
-            <section className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <h2 className="text-lg font-black text-stone-950">Analisis ATL</h2>
-                  <p className="mt-2 text-sm font-semibold text-stone-500">Rata-rata pencapaian ATL berdasarkan kategori keterampilan.</p>
-                </div>
-                <button className="rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-black text-stone-600">Semua Kelas</button>
-              </div>
-              <div className="mt-7 grid gap-5 lg:grid-cols-2">
-                <div className="rounded-[1.35rem] border border-stone-200 p-6">
-                  <h3 className="mb-5 text-sm font-black text-stone-950">Distribusi Rata-rata ATL</h3>
-                  <DonutChart rows={dashboard.atlDistribution || []} />
-                </div>
-                <div className="rounded-[1.35rem] border border-stone-200 p-6">
-                  <h3 className="mb-5 text-sm font-black text-stone-950">Tren Perkembangan ATL</h3>
-                  <TrendChart rows={dashboard.trend || []} />
-                </div>
-              </div>
-              <div className="mt-6 flex flex-col gap-4 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-start gap-3">
-                  <span className="material-symbols-outlined text-primary">emoji_objects</span>
-                  <div>
-                    <p className="text-sm font-black text-stone-950">Insight Utama</p>
-                    <p className="mt-1 text-xs font-semibold leading-5 text-stone-600">{insight}</p>
-                  </div>
-                </div>
-                <button className="rounded-xl border border-primary/40 bg-white px-5 py-3 text-xs font-black text-primary">Lihat Rekomendasi</button>
-              </div>
-            </section>
+            <ATLAnalysisSection
+              dashboard={dashboard}
+              insight={insight}
+              scopeOptions={analysisScopeOptions}
+              selectedScopeKey={analysisScopeKey}
+              onScopeChange={setAnalysisScopeKey}
+              scopeNote={analysisScopeNote}
+            />
 
-            <section className="grid gap-5 lg:grid-cols-3">
+            <section className="grid gap-5 lg:grid-cols-[1fr_1fr]">
               <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
                 <h2 className="text-base font-black text-stone-950">Perbandingan Kelas</h2>
                 <p className="mt-2 text-xs font-semibold text-stone-500">Perbandingan rata-rata ATL antar kelas.</p>
                 <ClassBarChart rows={dashboard.classComparison || []} />
-                <button className="mt-5 w-full rounded-xl border border-amber-200 px-4 py-3 text-xs font-black text-primary">Lihat Detail</button>
               </div>
-
-              <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
-                <h2 className="text-base font-black text-stone-950">Siswa Perlu Perhatian</h2>
-                <p className="mt-2 text-xs font-semibold text-stone-500">Siswa yang memerlukan pendampingan lebih lanjut.</p>
-                <div className="mt-5 space-y-4">
-                  {(dashboard.attentionStudents || []).length > 0 ? (
-                    (dashboard.attentionStudents || []).map((student, index) => (
-                      <div key={student.id || index} className="flex items-center gap-3">
-                        <div className="flex size-9 items-center justify-center rounded-full bg-amber-100 text-xs font-black text-primary">
-                          {(student.name || "?").split(" ").map((part) => part[0]).slice(0, 2).join("")}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs font-black text-stone-900">{student.name}</p>
-                          <div className="mt-1 h-2 rounded-full bg-stone-100">
-                            <div className="h-full rounded-full bg-amber-300" style={{ width: `${student.score || 0}%` }} />
-                          </div>
-                        </div>
-                        <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black text-primary">Perhatian</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center">
-                      <span className="material-symbols-outlined text-3xl text-stone-400">verified</span>
-                      <p className="mt-2 text-xs font-black text-stone-700">Belum ada siswa prioritas</p>
-                      <p className="mt-1 text-[11px] font-semibold text-stone-500">Data akan muncul setelah nilai ATL tersimpan.</p>
-                    </div>
-                  )}
-                </div>
-                <button className="mt-5 w-full rounded-xl border border-amber-200 px-4 py-3 text-xs font-black text-primary">Lihat Semua Siswa</button>
-              </div>
-
-              <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
-                <h2 className="text-base font-black text-stone-950">Monitoring Input Guru</h2>
-                <p className="mt-2 text-xs font-semibold text-stone-500">Progress input penilaian ATL oleh guru.</p>
-                <div className="mt-5 space-y-4">
-                  {(dashboard.teacherMonitoring || []).map((teacher) => (
-                    <div key={teacher.name} className="flex items-center gap-3">
-                      <div className="flex size-9 items-center justify-center rounded-full bg-stone-100 text-stone-500">
-                        <span className="material-symbols-outlined text-lg">person</span>
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-xs font-black text-stone-900">{teacher.name}</p>
-                        <p className="mt-0.5 text-[10px] font-semibold text-stone-500">{teacher.role || "Pengajar"} | {teacher.assessmentCount || 0} input</p>
-                        <div className="mt-1 h-2 rounded-full bg-stone-100">
-                          <div className="h-full rounded-full" style={{ width: `${teacher.progress}%`, backgroundColor: teacher.color }} />
-                        </div>
-                      </div>
-                      <span className="material-symbols-outlined text-stone-400">chevron_right</span>
-                    </div>
-                  ))}
-                </div>
-                <button className="mt-5 w-full rounded-xl border border-amber-200 px-4 py-3 text-xs font-black text-primary">Lihat Semua Guru</button>
-              </div>
+              <RecentActivityCompact activities={dashboard.recentActivities || []} />
             </section>
 
-            <section className="grid gap-5">
-              <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
-                <h2 className="text-base font-black text-stone-950">Aktivitas Terbaru</h2>
-                <p className="mt-2 text-xs font-semibold text-stone-500">Aktivitas terbaru yang terjadi dalam sistem.</p>
-                <div className="mt-6 space-y-4">
-                  {(dashboard.recentActivities || []).length > 0 ? (
-                    (dashboard.recentActivities || []).map((activity, index) => (
-                      <div key={`${activity.title}-${index}`} className="flex items-center gap-3">
-                        <div className="flex size-9 items-center justify-center rounded-full bg-amber-100 text-primary">
-                          <span className="material-symbols-outlined text-lg">description</span>
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs font-black text-stone-800">{activity.title}</p>
-                          <div className="mt-1 h-2 w-2/3 rounded-full bg-stone-100" />
-                        </div>
-                        <span className="text-[10px] font-bold text-stone-400">{formatTime(activity.time)}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center">
-                      <span className="material-symbols-outlined text-3xl text-stone-400">history</span>
-                      <p className="mt-2 text-xs font-black text-stone-700">Belum ada aktivitas terbaru</p>
-                      <p className="mt-1 text-[11px] font-semibold text-stone-500">Aktivitas akan tercatat saat bobot atau nilai diperbarui.</p>
-                    </div>
-                  )}
-                </div>
-                <button className="mt-6 w-full rounded-xl border border-amber-200 px-4 py-3 text-xs font-black text-primary">Lihat Semua Aktivitas</button>
-              </div>
-
-              <div className="rounded-[2rem] border border-stone-200 bg-white p-6 shadow-[0_20px_55px_rgba(15,23,42,0.07)] lg:p-10">
-                <div className="flex items-start gap-4">
-                  <span className="mt-1 h-10 w-1.5 shrink-0 rounded-full bg-primary" />
-                  <div>
-                    <h2 className="text-2xl font-black tracking-tight text-stone-950 lg:text-3xl">Alur Penilaian ATL</h2>
-                    <p className="mt-2 text-sm font-semibold text-stone-500 lg:text-base">Tahapan proses penilaian ATL dalam sistem.</p>
-                  </div>
-                </div>
-
-                <div className="relative mt-10">
-                  <div className="absolute left-[10%] right-[10%] top-14 hidden h-0.5 bg-stone-200 lg:block" />
-                  <div className="grid gap-6 lg:grid-cols-5 lg:gap-4">
-                    {(dashboard.workflow || []).map((step) => (
-                      <article key={step.step} className="relative flex min-w-0 flex-col items-center">
-                        <div
-                          className="relative z-10 flex size-28 items-center justify-center rounded-full border-[9px] border-white shadow-[0_10px_24px_rgba(15,23,42,0.12)]"
-                          style={{ backgroundColor: `${step.color}16`, color: step.color }}
-                        >
-                          <span className="material-symbols-outlined text-[46px]">{step.icon}</span>
-                        </div>
-                        <div className="hidden h-6 w-px lg:block" style={{ backgroundColor: `${step.color}75` }} />
-                        <span className="hidden size-3 rounded-full lg:block" style={{ backgroundColor: step.color }} />
-
-                        <div className="mt-4 flex min-h-[190px] w-full flex-col items-center rounded-2xl border border-stone-200 bg-white px-4 py-6 text-center shadow-[0_8px_22px_rgba(15,23,42,0.035)]">
-                          <span
-                            className="inline-flex min-w-14 items-center justify-center rounded-full px-4 py-2 text-base font-black"
-                            style={{ backgroundColor: `${step.color}16`, color: step.color }}
-                          >
-                            {step.step}
-                          </span>
-                          <h3 className="mt-5 text-base font-black leading-tight text-stone-950">{step.title}</h3>
-                          <p className="mt-4 text-sm font-semibold leading-6 text-stone-500">{step.note}</p>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowFlowPoster(true)}
-                  className="mt-10 w-full rounded-xl border border-primary bg-white px-4 py-4 text-base font-black text-primary transition-all hover:bg-primary/5"
-                >
-                  Lihat Detail Alur
-                </button>
-              </div>
-            </section>
-
-            <section className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
-              <h2 className="text-base font-black text-stone-950">Laporan & Dokumen</h2>
-              <p className="mt-2 text-xs font-semibold text-stone-500">Akses cepat ke laporan dan dokumen penting.</p>
-              <div className="mt-7 grid gap-4 md:grid-cols-4">
-                {(dashboard.documents || []).map((doc) => (
-                  <button key={doc.title} className="flex items-center gap-4 rounded-2xl border border-stone-200 bg-white p-4 text-left transition hover:border-primary/40 hover:bg-amber-50/40">
-                    <div className={`flex size-12 items-center justify-center rounded-2xl ${cardTone[doc.color] || "bg-amber-100 text-primary"}`}>
-                      <span className="material-symbols-outlined">{doc.icon}</span>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-black text-stone-900">{doc.title}</p>
-                      <p className="truncate text-[11px] font-semibold text-stone-500">{doc.note}</p>
-                    </div>
-                    <span className="material-symbols-outlined text-stone-400">chevron_right</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section className="relative overflow-hidden rounded-[1.6rem] border border-amber-100 bg-gradient-to-r from-amber-50 via-white to-amber-100 p-7">
-              <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-5">
-                  <div className="flex size-20 items-center justify-center rounded-full bg-primary/15 text-primary">
-                    <span className="material-symbols-outlined text-5xl">school</span>
-                  </div>
-                  <div>
-                    <h2 className="text-lg font-black text-stone-950">Gunakan data untuk keputusan yang lebih baik</h2>
-                    <p className="mt-2 max-w-2xl text-xs font-semibold leading-5 text-stone-600">
-                      Dashboard ini membantu Admin memantau perkembangan ATL secara menyeluruh. Analisis yang tepat akan mendukung keputusan akademik yang lebih berdampak.
-                    </p>
-                  </div>
-                </div>
-                <button className="rounded-xl border border-primary/40 bg-white px-5 py-3 text-xs font-black text-primary">Pelajari Lebih Lanjut</button>
-              </div>
-            </section>
+            <ATLFlowBanner
+              open={showFlowPoster}
+              onToggle={() => setShowFlowPoster((value) => !value)}
+            />
 
             <footer className="flex flex-col gap-2 pb-4 text-[11px] font-semibold text-stone-400 md:flex-row md:items-center md:justify-between">
               <span>© 2024 Cita Hati Surabaya - ATL Assessment System</span>
@@ -650,39 +965,6 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {showFlowPoster && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/70 p-3 backdrop-blur-md sm:p-6">
-          <button
-            type="button"
-            aria-label="Tutup poster alur"
-            className="absolute inset-0"
-            onClick={() => setShowFlowPoster(false)}
-          />
-          <section className="relative z-10 flex h-full max-h-[96vh] w-full max-w-7xl flex-col overflow-hidden rounded-[2rem] border border-white/30 bg-white/95 shadow-[0_32px_90px_rgba(0,0,0,0.38)]">
-            <div className="flex shrink-0 items-center justify-between gap-4 border-b border-stone-200 bg-white/90 px-5 py-4">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-primary">Detail Alur Penilaian</p>
-                <h3 className="mt-1 text-lg font-black text-stone-950">Poster Fuzzy-AHP ATL</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowFlowPoster(false)}
-                className="flex size-11 shrink-0 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-600 shadow-sm transition hover:border-primary hover:text-primary"
-                aria-label="Tutup poster"
-              >
-                <span className="material-symbols-outlined text-[22px]">close</span>
-              </button>
-            </div>
-            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-stone-100/70 p-3 sm:p-6">
-              <img
-                src={posterFuzzy}
-                alt="Poster alur penilaian Fuzzy-AHP ATL"
-                className="max-h-full w-auto max-w-full rounded-2xl bg-white object-contain shadow-[0_22px_65px_rgba(15,23,42,0.20)]"
-              />
-            </div>
-          </section>
-        </div>
-      )}
     </div>
   );
 }

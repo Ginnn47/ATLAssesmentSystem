@@ -401,12 +401,6 @@ export default function StudManage() {
   }, []);
 
   useEffect(() => {
-    const markNewData = () => setHasNewData(true);
-    window.addEventListener("atl-data-updated", markNewData);
-    return () => window.removeEventListener("atl-data-updated", markNewData);
-  }, []);
-
-  useEffect(() => {
     setCurrentPage(1);
     setExpandedStudentId(null);
     setShowAllAssessedTopics(false);
@@ -484,6 +478,17 @@ export default function StudManage() {
       setIsUpdating(false);
     }
   };
+
+  useEffect(() => {
+    const refreshNewData = () => {
+      setHasNewData(true);
+      window.setTimeout(() => {
+        handleUpdateData();
+      }, 0);
+    };
+    window.addEventListener("atl-data-updated", refreshNewData);
+    return () => window.removeEventListener("atl-data-updated", refreshNewData);
+  }, [selectedClassLabel, isUpdating]);
 
   const students = classAnalytics.students;
   const averageOverall = classAnalytics.average;

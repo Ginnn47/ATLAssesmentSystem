@@ -3,6 +3,7 @@ export const subjectDisplayName = (subject) =>
 
 export const ROLE_CODES = {
   ADMIN: "ROLE_ADMIN",
+  ACADEMIC: "ROLE_ACADEMIC",
   EVALUATOR: "ROLE_EVALUATOR",
   HOMEROOM: "ROLE_HOMEROOM",
   SUBJECT_COORDINATOR: "ROLE_SUBJECT_COORDINATOR",
@@ -11,6 +12,7 @@ export const ROLE_CODES = {
 
 export const ROLE_LABELS = {
   [ROLE_CODES.ADMIN]: "Admin",
+  [ROLE_CODES.ACADEMIC]: "Akademik",
   [ROLE_CODES.EVALUATOR]: "Evaluator",
   [ROLE_CODES.HOMEROOM]: "Wali Kelas",
   [ROLE_CODES.SUBJECT_COORDINATOR]: "PJ Mapel",
@@ -19,6 +21,7 @@ export const ROLE_LABELS = {
 
 const ROLE_ORDER = [
   ROLE_CODES.ADMIN,
+  ROLE_CODES.ACADEMIC,
   ROLE_CODES.EVALUATOR,
   ROLE_CODES.HOMEROOM,
   ROLE_CODES.SUBJECT_COORDINATOR,
@@ -34,9 +37,10 @@ export const getUserRoleCodes = (user = null) => {
   const roleText = `${user.role || ""} ${user.roleLabel || ""} ${user.roleGroup || ""} ${explicitRoles.join(" ")}`.toLowerCase();
   const roles = new Set(explicitRoles.filter((role) => Object.values(ROLE_CODES).includes(role)));
 
-  if (user.isSuperuser || roleText.includes("role_admin") || roleText.includes("admin") || roleText.includes("akademik")) {
+  if (user.isSuperuser || roleText.includes("role_admin") || roleText.includes("admin")) {
     roles.add(ROLE_CODES.ADMIN);
   }
+  if (roleText.includes("role_academic") || roleText.includes("akademik")) roles.add(ROLE_CODES.ACADEMIC);
 
   if (!roles.has(ROLE_CODES.ADMIN)) roles.add(ROLE_CODES.EVALUATOR);
   if (roleText.includes("role_homeroom") || roleText.includes("wali")) roles.add(ROLE_CODES.HOMEROOM);
@@ -67,6 +71,7 @@ export const getGrantedFeatures = (user = null) => {
   }
   const roles = getUserRoleCodes(user);
   const features = ["Assessment Input"];
+  if (roles.includes(ROLE_CODES.ACADEMIC)) features.push("Academic Review", "User Access Overview");
   if (roles.includes(ROLE_CODES.HOMEROOM)) features.push("Student Monitoring");
   if (roles.includes(ROLE_CODES.SUBJECT_COORDINATOR)) features.push("Subject Reports");
   if (roles.includes(ROLE_CODES.ATL_EXPERT)) features.push("Criteria Management", "Weight Management");
@@ -75,41 +80,22 @@ export const getGrantedFeatures = (user = null) => {
 
 export const canAccessRoute = (user = null, allowedRoles = []) => {
   if (!user) return false;
-  if (isAdminUser(user)) return true;
-  if (!Array.isArray(allowedRoles) || allowedRoles.length === 0) return true;
-  const userRoles = getUserRoleCodes(user);
-  return allowedRoles.some((role) => userRoles.includes(role));
+  return true;
 };
 
 export const getSidebarMenuGroups = (user = null) => {
-  const roles = getUserRoleCodes(user);
-  const admin = roles.includes(ROLE_CODES.ADMIN);
-  const canHomeroom = admin || roles.includes(ROLE_CODES.HOMEROOM);
-  const canReport = admin || roles.includes(ROLE_CODES.SUBJECT_COORDINATOR);
-  const canExpert = admin || roles.includes(ROLE_CODES.ATL_EXPERT);
-
   const main = [
     { icon: "space_dashboard", label: "Dashboard", key: "dashboard", to: "/dashboard" },
+    { icon: "groups", label: "Student Management", key: "students", to: "/students" },
+    { icon: "edit_note", label: "Input Penilaian ATL", key: "input-atl", to: "/input-atl" },
+    { icon: "poll", label: "ATL Reports", key: "report", to: "/reports" },
   ];
 
-  if (canHomeroom) {
-    main.push({ icon: "groups", label: "Student Management", key: "students", to: "/students" });
-  }
-
-  main.push({ icon: "edit_note", label: "Input Penilaian ATL", key: "input-atl", to: "/input-atl" });
-
-  if (canReport) {
-    main.push({ icon: "poll", label: "ATL Reports", key: "report", to: "/reports" });
-  }
-
-  const config = [];
-  if (admin) {
-    config.push({ icon: "school", label: "Academic Management", key: "academic", to: "/academic/manage" });
-  }
-  if (canExpert) {
-    config.push({ icon: "assignment", label: "Criteria Management", key: "criteria", to: "/atl/manage" });
-    config.push({ icon: "tune", label: "Weight Management", key: "weight", to: "/atl/weight" });
-  }
+  const config = [
+    { icon: "school", label: "Academic Management", key: "academic", to: "/academic/manage" },
+    { icon: "assignment", label: "Criteria Management", key: "criteria", to: "/atl/manage" },
+    { icon: "tune", label: "Weight Management", key: "weight", to: "/atl/weight" },
+  ];
 
   return { main, config };
 };

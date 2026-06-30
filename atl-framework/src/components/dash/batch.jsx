@@ -355,7 +355,8 @@ export default function BatchInputATL() {
       topicId: dataKey,
       studentId: matrixContext?.student?.id ?? preferredStudentId,
     });
-    alert("Pilihan kelas/mapel/topik disimpan.");
+    setSaveStatus("default");
+    setSaveMessage("Default tampilan filter disimpan.");
   };
 
   const filledCells = useMemo(
@@ -485,6 +486,7 @@ export default function BatchInputATL() {
       };
     })
   );
+  const hasAssessmentRatings = (item) => Object.values(item?.ratings || {}).some(Boolean);
 
   const handleSaveDraft = () => {
     if (!dataKey || columns.length === 0 || students.length === 0) return;
@@ -501,17 +503,26 @@ export default function BatchInputATL() {
       return;
     }
     const draftItems = buildAssessmentItems();
+    const sendItems = draftItems.filter(hasAssessmentRatings);
+    if (sendItems.length === 0) {
+      setSaveStatus("failed");
+      setSaveMessage("Belum ada nilai untuk disimpan. Isi minimal satu nilai siswa.");
+      return;
+    }
     hasLocalChangesRef.current = true;
     setSaveStatus("pushing");
-    setSaveMessage(`Menyimpan nilai ${students.length} siswa...`);
+    setSaveMessage(`Menyimpan nilai ${sendItems.length} siswa...`);
     const result = await saveAssessmentBatch(
-      draftItems.map(({ studentId, topicId, ratings }) => ({ studentId, topic: topicId, ratings }))
+      sendItems.map(({ studentId, topicId, ratings }) => ({ studentId, topic: topicId, ratings }))
     );
     if (result?.synced) {
       hasLocalChangesRef.current = false;
-      clearAssessmentDrafts(draftItems);
+      const savedDrafts = sendItems.filter((item) => (
+        (result.items || []).some((saved) => String(saved.studentId) === String(item.studentId) && saved.status === "saved")
+      ));
+      clearAssessmentDrafts(savedDrafts);
       setSaveStatus("backend");
-      setSaveMessage(`Nilai ${students.length} siswa berhasil disimpan.`);
+      setSaveMessage(`Nilai ${result.savedCount || savedDrafts.length || sendItems.length} siswa berhasil disimpan.`);
     } else {
       setSaveStatus("failed");
       setSaveMessage(result?.error || "Gagal menyimpan nilai.");
@@ -535,6 +546,7 @@ export default function BatchInputATL() {
     backend: "bg-emerald-100 text-emerald-700",
     draft: "bg-sky-100 text-sky-700",
     editing: "bg-amber-100 text-amber-800",
+    default: "bg-primary/10 text-primary",
     pushing: "bg-blue-100 text-blue-700",
     failed: "bg-red-100 text-red-700",
   }[saveStatus] || "bg-stone-100 text-stone-700";
@@ -606,9 +618,7 @@ export default function BatchInputATL() {
                 <div>
                   <p className="text-sm font-black text-stone-900">Isi nilai dulu, lalu simpan saat sudah siap.</p>
                   <p className="mt-1 text-xs font-semibold leading-5 text-stone-600">
-                    Perubahan langsung muncul di mode <b>Batch</b> dan <b>Detailed</b>.
-                    <b> Simpan Sementara</b> untuk lanjut nanti.
-                    Pilih <b>Simpan Penilaian</b> agar nilai masuk ke laporan.
+                    Progress menunjukkan jumlah cell yang sudah dinilai. Gunakan <b>Simpan Default</b> untuk menyimpan pilihan kelas, mapel, topik, dan siswa detail saat ini sebagai tampilan awal.
                   </p>
                   {saveStatus && <p className={`mt-2 inline-flex rounded-lg px-2.5 py-1 text-[11px] font-black ${saveStatusClass}`}>{saveMessage}</p>}
                 </div>
@@ -618,17 +628,18 @@ export default function BatchInputATL() {
                   Progress {progress}%
                 </span>
                 <button
-                  onClick={handleSaveDraft}
-                  className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-5 py-2.5 text-sm font-black text-stone-700 transition-all hover:border-amber-300 hover:bg-amber-100"
+                  type="button"
+                  onClick={saveFilterSelection}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-white shadow-sm transition-all hover:bg-secondary"
                 >
-                  <span className="material-symbols-outlined text-[18px]">save</span>
-                  Simpan Sementara
+                  <span className="material-symbols-outlined text-[18px]">bookmark</span>
+                  Simpan Default
                 </button>
               </div>
             </section>
 
             <section className="rounded-[1.4rem] border border-stone-200 bg-white p-4 shadow-[0_14px_32px_rgba(15,23,42,0.05)]">
-              <div className="grid gap-4 xl:grid-cols-[180px_200px_minmax(0,1fr)_190px] xl:items-stretch">
+              <div className="grid gap-4 xl:grid-cols-[180px_200px_minmax(0,1fr)_64px] xl:items-stretch">
                 <div className="flex flex-col justify-center border-stone-200 xl:border-r xl:pr-4">
                   <label className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-stone-500">
                     <span className="material-symbols-outlined text-[17px] text-primary">groups</span>
@@ -706,22 +717,15 @@ export default function BatchInputATL() {
                     })}
                   </div>
                 </div>
-                <div className="flex flex-col justify-center gap-2 border-stone-200 xl:border-l xl:pl-4">
-                  <button
-                    type="button"
-                    onClick={saveFilterSelection}
-                    className="inline-flex min-h-[42px] items-center justify-center gap-2 rounded-lg bg-primary px-4 text-xs font-black text-white shadow-sm transition-all hover:bg-secondary"
-                  >
-                    <span className="material-symbols-outlined text-[17px]">bookmark</span>
-                    Simpan Default
-                  </button>
+                <div className="flex items-center justify-center border-stone-200 xl:border-l xl:pl-4">
                   <button
                     type="button"
                     onClick={() => setShowDetailPanel((value) => !value)}
-                    className="inline-flex min-h-[42px] items-center justify-center gap-2 rounded-lg border border-stone-200 bg-white px-4 text-xs font-black text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5"
+                    title={showDetailPanel ? "Sembunyikan Detail" : "Tampilkan Detail"}
+                    aria-label={showDetailPanel ? "Sembunyikan Detail" : "Tampilkan Detail"}
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-stone-200 bg-white text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5"
                   >
-                    <span className="material-symbols-outlined text-[17px]">{showDetailPanel ? "visibility_off" : "visibility"}</span>
-                    {showDetailPanel ? "Sembunyikan Detail" : "Tampilkan Detail"}
+                    <span className="material-symbols-outlined text-[18px]">{showDetailPanel ? "visibility_off" : "visibility"}</span>
                   </button>
                 </div>
               </div>
@@ -980,11 +984,12 @@ export default function BatchInputATL() {
             </Link>
             <div className="flex items-center gap-3">
               <button
-                onClick={handleSaveDraft}
+                type="button"
+                onClick={saveFilterSelection}
                 className="inline-flex items-center gap-2 rounded-2xl border border-stone-200 bg-white px-6 py-3 text-sm font-black text-stone-700 transition-all hover:border-primary/40 hover:bg-primary/5"
               >
-                <span className="material-symbols-outlined text-[18px]">save</span>
-                Simpan Sementara
+                <span className="material-symbols-outlined text-[18px]">bookmark</span>
+                Simpan Default
               </button>
               <button
                 onClick={handleSend}

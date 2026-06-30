@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import schoolLogo from "../../assets/Cita_Hati_Christian_School_Logo.jpeg";
-import { getCurrentUser, logoutUser } from "../../services/atlApi";
+import { getCurrentUser, logoutUser, updateCurrentUser } from "../../services/atlApi";
 import { getGrantedFeatures, getSidebarMenuGroups, getUserRoleNames } from "../../services/accessControl";
 
 export default function Sidebar({ user }) {
@@ -34,9 +34,14 @@ export default function Sidebar({ user }) {
 
   const [currentUser, setCurrentUser] = useState(() => readCachedUser() || normalizeUser(user) || fallbackUser);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [accountName, setAccountName] = useState(currentUser.name || "");
+  const [accountEmail, setAccountEmail] = useState(currentUser.email || "");
+  const [accountStatus, setAccountStatus] = useState("");
   const { main: menuItems, config: configItems } = useMemo(() => getSidebarMenuGroups(currentUser), [currentUser]);
   const roleNames = useMemo(() => getUserRoleNames(currentUser), [currentUser]);
   const grantedFeatures = useMemo(() => getGrantedFeatures(currentUser), [currentUser]);
+  const classAccess = Array.isArray(currentUser?.classAccess) ? currentUser.classAccess : [];
+  const subjectAccess = Array.isArray(currentUser?.subjectAccess) ? currentUser.subjectAccess : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +65,11 @@ export default function Sidebar({ user }) {
     };
   }, [user, fallbackUser]);
 
+  useEffect(() => {
+    setAccountName(currentUser?.name || "");
+    setAccountEmail(currentUser?.email || "");
+  }, [currentUser?.email, currentUser?.name]);
+
   const initials = (currentUser.name || fallbackUser.name)
     .split(" ")
     .filter(Boolean)
@@ -76,6 +86,23 @@ export default function Sidebar({ user }) {
     }
     window.dispatchEvent(new Event("atl-auth-updated"));
     navigate("/");
+  };
+
+  const handleAccountSave = async (event) => {
+    event.preventDefault();
+    const nextName = accountName.trim();
+    if (!nextName) {
+      setAccountStatus("Nama tidak boleh kosong.");
+      return;
+    }
+    setAccountStatus("Menyimpan profil...");
+    try {
+      const updated = await updateCurrentUser({ name: nextName, email: accountEmail.trim() });
+      setCurrentUser(normalizeUser(updated) || currentUser);
+      setAccountStatus("Profil berhasil disimpan.");
+    } catch (error) {
+      setAccountStatus(error?.message || "Gagal menyimpan profil.");
+    }
   };
 
   return (
@@ -181,7 +208,7 @@ export default function Sidebar({ user }) {
           {isUserMenuOpen && (
             <div className="absolute bottom-full left-0 right-0 mb-3 overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.16)]">
               <div className="border-b border-stone-100 px-4 py-3">
-                <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">My Access</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Profil & My Access</p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {roleNames.map((role) => (
                     <span key={role} className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-black text-primary">
@@ -192,25 +219,47 @@ export default function Sidebar({ user }) {
                 <p className="mt-2 line-clamp-2 text-[11px] font-semibold leading-5 text-stone-500">
                   {grantedFeatures.slice(0, 3).join(", ")}
                 </p>
+                <div className="mt-3 grid gap-2">
+                  <div className="rounded-xl border border-stone-100 bg-stone-50 px-3 py-2">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-stone-400">Akses Kelas</p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {classAccess.length > 0
+                        ? classAccess.map((item) => <span key={item} className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black text-blue-700">{item}</span>)
+                        : <span className="text-[11px] font-semibold text-stone-500">Semua / tidak dibatasi</span>}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-stone-100 bg-stone-50 px-3 py-2">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-stone-400">Akses Mapel</p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {subjectAccess.length > 0
+                        ? subjectAccess.map((item) => <span key={item} className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700">{item}</span>)
+                        : <span className="text-[11px] font-semibold text-stone-500">Semua / tidak dibatasi</span>}
+                    </div>
+                  </div>
+                </div>
               </div>
-              {[
-                ["person", "Profile", "/dashboard"],
-                ["verified_user", "My Access", "/dashboard"],
-                ["settings", "Account Settings", "/dashboard"],
-              ].map(([icon, label, to]) => (
+              <form onSubmit={handleAccountSave} className="border-b border-stone-100 px-4 py-3">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400">Nama Akun</label>
+                <input
+                  value={accountName}
+                  onChange={(event) => setAccountName(event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-bold text-stone-800 outline-none transition focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+                />
+                <label className="mt-3 block text-[10px] font-black uppercase tracking-widest text-stone-400">Email</label>
+                <input
+                  value={accountEmail}
+                  onChange={(event) => setAccountEmail(event.target.value)}
+                  className="mt-1 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-bold text-stone-800 outline-none transition focus:border-primary/50 focus:ring-2 focus:ring-primary/10"
+                />
+                {accountStatus && <p className="mt-2 text-[11px] font-bold text-stone-500">{accountStatus}</p>}
                 <button
-                  key={label}
-                  type="button"
-                  onClick={() => {
-                    setIsUserMenuOpen(false);
-                    navigate(to);
-                  }}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-xs font-bold text-stone-600 transition hover:bg-stone-50 hover:text-primary"
+                  type="submit"
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-black text-white transition hover:bg-secondary"
                 >
-                  <span className="material-symbols-outlined text-[18px]">{icon}</span>
-                  {label}
+                  <span className="material-symbols-outlined text-[16px]">save</span>
+                  Simpan Profil
                 </button>
-              ))}
+              </form>
               <button
                 type="button"
                 onClick={handleLogout}

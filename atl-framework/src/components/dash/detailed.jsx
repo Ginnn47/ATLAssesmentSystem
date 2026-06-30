@@ -555,6 +555,18 @@ export default function DetailedInputATL() {
     setSaveMessage("Draft tersimpan.");
   };
 
+  const handleSaveDefaultFilter = () => {
+    saveAssessmentFilterState({
+      className: selectedClass,
+      subject: selectedSubject,
+      topicIndex: selectedTopicIndex,
+      topicId: dataKey,
+      studentId: selectedStudent?.id ?? null,
+    });
+    setSaveStatus("default");
+    setSaveMessage("Default tampilan filter disimpan.");
+  };
+
   const handlePush = async () => {
     if (!canPushAssessment) {
       setSaveStatus("failed");
@@ -572,6 +584,11 @@ export default function DetailedInputATL() {
       note,
       key: `${selectedStudent.id}:${dataKey}`,
     };
+    if (!Object.values(snapshot.ratings).some(Boolean)) {
+      setSaveStatus("failed");
+      setSaveMessage("Belum ada nilai untuk disimpan. Pilih minimal satu level rubrik.");
+      return { synced: false, error: "Belum ada nilai untuk disimpan." };
+    }
     const requestId = pushRequestRef.current + 1;
     pushRequestRef.current = requestId;
     refreshCurrentAssessmentRef(snapshot);
@@ -652,6 +669,7 @@ export default function DetailedInputATL() {
     backend: "bg-emerald-100 text-emerald-700",
     draft: "bg-sky-100 text-sky-700",
     editing: "bg-amber-100 text-amber-800",
+    default: "bg-primary/10 text-primary",
     pushing: "bg-blue-100 text-blue-700",
     failed: "bg-red-100 text-red-700",
   }[saveStatus] || "bg-stone-100 text-stone-700";
@@ -717,9 +735,7 @@ export default function DetailedInputATL() {
                 <div>
                   <p className="text-sm font-black text-stone-900">Isi nilai dulu, lalu simpan saat sudah siap.</p>
                   <p className="mt-1 text-xs font-semibold leading-5 text-stone-600">
-                    Perubahan langsung muncul di mode <b>Detailed</b> dan <b>Batch</b>.
-                    <b> Simpan Sementara</b> untuk lanjut nanti.
-                    Pilih <b>Simpan Penilaian</b> agar nilai masuk ke laporan.
+                    Progress menunjukkan jumlah kriteria yang sudah dinilai. Gunakan <b>Simpan Default</b> untuk menyimpan pilihan kelas, mapel, topik, dan siswa saat ini sebagai tampilan awal.
                   </p>
                   {saveStatus && <p className={`mt-2 inline-flex rounded-lg px-2.5 py-1 text-[11px] font-black ${saveStatusClass}`}>{saveMessage}</p>}
                   {exportMessage && <p className="mt-2 text-[11px] font-bold text-emerald-700">{exportMessage}</p>}
@@ -731,11 +747,11 @@ export default function DetailedInputATL() {
                 </span>
                 <button
                   type="button"
-                  onClick={handleSaveDraft}
-                  className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-5 py-2.5 text-sm font-black text-stone-700 transition-all hover:border-amber-300 hover:bg-amber-100"
+                  onClick={handleSaveDefaultFilter}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-white shadow-sm transition-all hover:bg-secondary"
                 >
-                  <span className="material-symbols-outlined text-[18px]">save</span>
-                  Simpan Sementara
+                  <span className="material-symbols-outlined text-[18px]">bookmark</span>
+                  Simpan Default
                 </button>
               </div>
             </section>

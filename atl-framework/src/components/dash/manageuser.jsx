@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "./sidebar";
-import { getClasses, getCurrentUser, getTopics, getUsers, importClassStudents, updateUser } from "../../services/atlApi";
+import { createStudent, deleteClass, deleteStudent, getClasses, getCurrentUser, getStudents, getTopics, getUsers, importClassStudents, updateStudent, updateUser } from "../../services/atlApi";
 import { ROLE_CODES, getGrantedFeatures, getUserRoleCodes, isAdminUser } from "../../services/accessControl";
 
 const roleColors = {
@@ -8,7 +8,7 @@ const roleColors = {
   Akademik: "bg-indigo-100 text-indigo-700 border-indigo-200",
   "Guru Wali Kelas": "bg-emerald-100 text-emerald-700 border-emerald-200",
   "PJ Mapel": "bg-amber-100 text-amber-700 border-amber-200",
-  "Fuzzy Expert": "bg-violet-100 text-violet-700 border-violet-200",
+  "ATL Expert": "bg-violet-100 text-violet-700 border-violet-200",
   "Guru / Evaluator": "bg-stone-100 text-stone-700 border-stone-200",
   "Multi Role": "bg-primary/10 text-primary-hover border-primary/20",
 };
@@ -61,8 +61,8 @@ const evaluatorRoleOptions = [
   },
   {
     key: ROLE_CODES.ATL_EXPERT,
-    label: "Fuzzy Expert",
-    group: "Fuzzy Expert",
+    label: "ATL Expert",
+    group: "ATL Expert",
     icon: "hub",
     desc: "Mengatur bobot Fuzzy-AHP sesuai mapel yang diampu.",
     active: "border-violet-500 bg-violet-500 text-white shadow-violet-500/20",
@@ -104,6 +104,14 @@ export default function ManageUser() {
   const [classImportStatus, setClassImportStatus] = useState("");
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("Semua Peran");
+  const [studentReviewOpen, setStudentReviewOpen] = useState(false);
+  const [reviewClass, setReviewClass] = useState("");
+  const [reviewStudents, setReviewStudents] = useState([]);
+  const [reviewStatus, setReviewStatus] = useState("");
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [deletingStudentId, setDeletingStudentId] = useState(null);
+  const [studentForm, setStudentForm] = useState({ id: null, nis: "", name: "" });
+  const [studentFormSaving, setStudentFormSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -189,13 +197,13 @@ export default function ManageUser() {
 
   const accessSummary = useMemo(() => {
     const activeUsers = users.filter((user) => String(user.status || "").toLowerCase() === "aktif");
-    const fuzzyExperts = assignableTeachers.filter((user) => deriveEvaluatorRoles(user).includes(ROLE_CODES.ATL_EXPERT));
+    const atlExperts = assignableTeachers.filter((user) => deriveEvaluatorRoles(user).includes(ROLE_CODES.ATL_EXPERT));
     const subjectLeads = assignableTeachers.filter((user) => deriveEvaluatorRoles(user).includes(ROLE_CODES.SUBJECT_COORDINATOR));
     return [
       { label: "Total Pengguna", value: users.length, note: "Semua akun", icon: "groups", tone: "bg-blue-50 text-blue-700 border-blue-100" },
       { label: "Guru Aktif", value: activeUsers.filter((user) => !user.isSuperuser).length, note: "Akun aktif", icon: "group", tone: "bg-emerald-50 text-emerald-700 border-emerald-100" },
       { label: "PJ Mapel", value: subjectLeads.length, note: "Akses mapel", icon: "menu_book", tone: "bg-amber-50 text-amber-700 border-amber-100" },
-      { label: "Fuzzy Expert", value: fuzzyExperts.length, note: "Tim pembobotan", icon: "hub", tone: "bg-violet-50 text-violet-700 border-violet-100" },
+      { label: "ATL Expert", value: atlExperts.length, note: "Tim pembobotan", icon: "hub", tone: "bg-violet-50 text-violet-700 border-violet-100" },
     ];
   }, [assignableTeachers, users]);
 
@@ -223,6 +231,123 @@ export default function ManageUser() {
     } catch (error) {
       setClassImportStatus("");
       alert(error.response?.data?.error || "Gagal import Excel. Pastikan file memiliki kolom NIS, Nama, dan Kelas.");
+    }
+  };
+
+  const refreshClassStudents = async (classCode = reviewClass) => {
+    if (!classCode) return [];
+    setReviewLoading(true);
+    setReviewStatus("Mengambil daftar siswa saat ini...");
+    try {
+      const students = await getStudents(classCode);
+      setReviewStudents(Array.isArray(students) ? students : []);
+      setReviewStatus("");
+      return Array.isArray(students) ? students : [];
+    } catch (error) {
+      setReviewStatus(error.message || "Daftar siswa belum bisa ditampilkan saat ini.");
+      return [];
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const openStudentReview = async (classCode) => {
+    setReviewClass(classCode);
+    setStudentReviewOpen(true);
+    setReviewStudents([]);
+    setStudentForm({ id: null, nis: "", name: "" });
+    await refreshClassStudents(classCode);
+  };
+
+  const resetStudentForm = () => {
+    setStudentForm({ id: null, nis: "", name: "" });
+  };
+
+  const handleEditStudent = (student) => {
+    setStudentForm({
+      id: student.id,
+      nis: student.nis || "",
+      name: student.name || student.fullName || "",
+    });
+  };
+
+  const handleSaveStudent = async () => {
+    if (!canManageAccess || !reviewClass) return;
+    const payload = {
+      nis: studentForm.nis.trim(),
+      name: studentForm.name.trim(),
+      classCode: reviewClass,
+    };
+    if (!payload.nis || !payload.name) {
+      setReviewStatus("Lengkapi NIS dan nama siswa terlebih dahulu.");
+      return;
+    }
+
+    setStudentFormSaving(true);
+    setReviewStatus(studentForm.id ? "Menyimpan perubahan siswa..." : "Menambahkan siswa baru...");
+    try {
+      const savedStudent = studentForm.id
+        ? await updateStudent(studentForm.id, payload)
+        : await createStudent(payload);
+      if (savedStudent) {
+        setReviewStudents((prev) => {
+          if (studentForm.id) {
+            return prev.map((item) => (item.id === savedStudent.id ? savedStudent : item));
+          }
+          const exists = prev.some((item) => item.id === savedStudent.id);
+          return exists ? prev.map((item) => (item.id === savedStudent.id ? savedStudent : item)) : [...prev, savedStudent];
+        });
+      } else {
+        await refreshClassStudents(reviewClass);
+      }
+      resetStudentForm();
+      setReviewStatus(studentForm.id ? "Data siswa diperbarui." : "Siswa baru ditambahkan.");
+    } catch (error) {
+      setReviewStatus(error.response?.data?.error || error.message || "Data siswa belum bisa disimpan saat ini.");
+    } finally {
+      setStudentFormSaving(false);
+    }
+  };
+
+  const handleDeleteStudent = async (student) => {
+    if (!canManageAccess || !student?.id) return;
+    const confirmed = confirm(`Hapus ${student.name || student.fullName || "siswa ini"} dari daftar kelas ${reviewClass}?`);
+    if (!confirmed) return;
+    setDeletingStudentId(student.id);
+    try {
+      await deleteStudent(student.id);
+      setReviewStudents((prev) => prev.filter((item) => item.id !== student.id));
+      if (studentForm.id === student.id) resetStudentForm();
+      setReviewStatus("Daftar siswa diperbarui.");
+    } catch (error) {
+      setReviewStatus(error.message || "Siswa belum bisa dihapus saat ini.");
+    } finally {
+      setDeletingStudentId(null);
+    }
+  };
+
+  const handleDeleteReviewClass = async () => {
+    if (!canManageAccess || !reviewClass) return;
+    const confirmed = confirm(`Hapus data kelas ${reviewClass}? Kelas ini akan hilang dari Academic Management dan semua siswa aktif di kelas ini dinonaktifkan.`);
+    if (!confirmed) return;
+    setDeletingStudentId("__all__");
+    setReviewStatus("Menghapus data kelas...");
+    try {
+      await deleteClass(reviewClass);
+      setClassList((prev) => prev.filter((item) => item !== reviewClass));
+      setUsers((prev) => prev.map((user) => ({
+        ...user,
+        classAccess: normalizeAccessList(user.classAccess).filter((item) => item !== reviewClass),
+      })));
+      setReviewStudents([]);
+      resetStudentForm();
+      setReviewStatus("Data kelas sudah dihapus.");
+      setStudentReviewOpen(false);
+    } catch (error) {
+      setReviewStatus(error.response?.data?.error || error.message || "Data kelas belum bisa dihapus saat ini.");
+      await refreshClassStudents(reviewClass);
+    } finally {
+      setDeletingStudentId(null);
     }
   };
 
@@ -464,7 +589,7 @@ export default function ManageUser() {
                     <div>
                       <p className="text-sm font-bold text-stone-900">Catatan Hak Akses</p>
                       <p className="text-xs font-semibold text-stone-600">
-                        Wali Kelas dapat mengakses halaman Stud Manage untuk kelas yang diampu. PJ Mapel dan Fuzzy Expert dapat mengakses data penilaian sesuai mapel yang diampu.
+                        Wali Kelas dapat mengakses halaman Stud Manage untuk kelas yang diampu. PJ Mapel dan ATL Expert dapat mengakses data penilaian sesuai mapel yang diampu.
                       </p>
                     </div>
                   </div>
@@ -487,64 +612,6 @@ export default function ManageUser() {
                         </span>
                       </div>
                     </div>
-
-                    <div className="border-b border-stone-200 bg-white px-6 py-5">
-                      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
-                        <div>
-                          <label className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-stone-500">
-                            Upload Excel Data Siswa
-                          </label>
-                          <div className="grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)]">
-                            <input
-                              value={newClassName}
-                              onChange={(e) => setNewClassName(e.target.value)}
-                              placeholder="Contoh: 5A untuk kelas default"
-                              className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
-                            />
-                            <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-dashed border-primary/40 bg-primary/5 px-4 py-3 text-sm font-bold text-stone-700 transition hover:border-primary hover:bg-primary/10">
-                              <span className="truncate">{classImportFile?.name || "Pilih file .xlsx data siswa"}</span>
-                              <span className="material-symbols-outlined text-[18px] text-primary">upload_file</span>
-                              <input
-                                type="file"
-                                accept=".xlsx,.xls"
-                                className="hidden"
-                                onChange={(event) => setClassImportFile(event.target.files?.[0] || null)}
-                              />
-                            </label>
-                          </div>
-                          <p className="mt-2 text-[11px] font-semibold text-stone-500">
-                            Header minimal: NIS, Nama, Kelas. Jika kolom Kelas kosong, pakai kode default di kiri.
-                          </p>
-                          {classImportStatus && (
-                            <p className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700">
-                              {classImportStatus}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex items-end">
-                          <button
-                            type="button"
-                            onClick={importStudentsFromExcel}
-                            disabled={!canManageAccess}
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-bold text-stone-900 shadow-lg shadow-primary/20 transition-all hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <span className="material-symbols-outlined text-[18px]">upload_file</span>
-                            Import
-                          </button>
-                        </div>
-                      </div>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {classList.map((cls, idx) => {
-                          const color = classColorVariants[idx % classColorVariants.length];
-                          return (
-                            <span key={cls} className={`rounded-full border px-3 py-1 text-xs font-black uppercase tracking-tight ${color.bg} ${color.text} ${color.border}`}>
-                              {cls}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    </div>
-
                     <div className="divide-y divide-stone-100">
                       {assignableTeachers.map((teacher) => {
                         const selectedRoles = deriveEvaluatorRoles(teacher);
@@ -730,7 +797,7 @@ export default function ManageUser() {
                         {[
                           ["home_work", "Wali Kelas", "Mengakses Stud Manage untuk kelas yang diampu."],
                           ["menu_book", "PJ Mapel", "Mengakses input nilai dan report sesuai mapel yang diampu."],
-                          ["hub", "Fuzzy Expert", "Mengelola pembobotan Fuzzy-AHP untuk mapel yang diampu."],
+                          ["hub", "ATL Expert", "Mengelola pembobotan Fuzzy-AHP untuk mapel yang diampu."],
                           ["lock", "Keamanan Data", "Role ganda tetap mengikuti batas kelas dan mapel."],
                         ].map(([icon, title, desc]) => (
                           <div key={title} className="flex gap-3">
@@ -745,11 +812,276 @@ export default function ManageUser() {
                         ))}
                       </div>
                     </section>
+                    <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-[0_10px_28px_rgba(15,23,42,0.05)]">
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
+                          <span className="material-symbols-outlined">folder_managed</span>
+                        </span>
+                        <div>
+                          <p className="text-sm font-black text-stone-900">Data Siswa & Import Excel</p>
+                          <p className="text-xs font-semibold text-stone-500">Upload file kelas dan review daftar siswa sebelum dipakai di Stud Manage.</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 space-y-3">
+                        <input
+                          value={newClassName}
+                          onChange={(e) => setNewClassName(e.target.value)}
+                          placeholder="Kode kelas default, contoh: 5A"
+                          className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-900 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+                        />
+                        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-dashed border-primary/40 bg-primary/5 px-4 py-3 text-sm font-bold text-stone-700 transition hover:border-primary hover:bg-primary/10">
+                          <span className="truncate">{classImportFile?.name || "Pilih file .xlsx data siswa"}</span>
+                          <span className="material-symbols-outlined text-[18px] text-primary">upload_file</span>
+                          <input
+                            type="file"
+                            accept=".xlsx,.xls"
+                            className="hidden"
+                            onChange={(event) => setClassImportFile(event.target.files?.[0] || null)}
+                          />
+                        </label>
+                        <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold leading-5 text-amber-800">
+                          Header minimal: <strong>NIS</strong>, <strong>Nama</strong>, dan <strong>Kelas</strong>. Jika kolom Kelas kosong, isi kode kelas default di atas.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={importStudentsFromExcel}
+                          disabled={!canManageAccess}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-bold text-stone-900 shadow-lg shadow-primary/20 transition-all hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">upload_file</span>
+                          Import Data Siswa
+                        </button>
+                        {classImportStatus && (
+                          <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700">
+                            {classImportStatus}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="mt-5 border-t border-stone-100 pt-4">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Kelas Tersedia</p>
+                        <div className="mt-3 space-y-2">
+                          {classList.map((cls, idx) => {
+                            const color = classColorVariants[idx % classColorVariants.length];
+                            return (
+                              <button
+                                key={cls}
+                                type="button"
+                                onClick={() => openStudentReview(cls)}
+                                className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-xs font-black uppercase tracking-tight transition hover:-translate-y-0.5 ${color.bg} ${color.text} ${color.border}`}
+                              >
+                                <span>{cls}</span>
+                                <span className="inline-flex items-center gap-1 text-[10px]">
+                                  Review
+                                  <span className="material-symbols-outlined text-[14px]">visibility</span>
+                                </span>
+                              </button>
+                            );
+                          })}
+                          {classList.length === 0 && (
+                            <span className="rounded-xl border border-dashed border-stone-300 px-3 py-2 text-xs font-semibold text-stone-400">
+                              Belum ada kelas dari backend.
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-2 text-[11px] font-semibold leading-5 text-stone-500">
+                          Klik badge kelas untuk membuka preview daftar siswa dan opsi penghapusan.
+                        </p>
+                      </div>
+                    </section>
                   </aside>
                 </div>
               </div>
           </div>
         </div>
+        {studentReviewOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-4 backdrop-blur-sm">
+            <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-primary/40 bg-white shadow-2xl">
+              <div className="border-b border-stone-200 bg-primary/10 px-6 py-5">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-primary-hover">Preview Data Siswa</p>
+                    <h3 className="mt-1 text-2xl font-black text-stone-950">Kelas {reviewClass}</h3>
+                    <p className="mt-2 text-sm font-semibold leading-6 text-stone-600">
+                      Review daftar siswa yang tersimpan di backend untuk kelas ini. Penghapusan di sini akan menonaktifkan siswa dari daftar aktif.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => refreshClassStudents(reviewClass)}
+                      disabled={reviewLoading}
+                      className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-bold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">{reviewLoading ? "hourglass_top" : "refresh"}</span>
+                      Refresh
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStudentReviewOpen(false)}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-500 transition hover:bg-stone-50"
+                      aria-label="Tutup preview siswa"
+                    >
+                      <span className="material-symbols-outlined">close</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <div className="rounded-2xl border border-primary/20 bg-white px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Kelas</p>
+                    <p className="mt-1 text-sm font-black text-stone-900">{reviewClass || "-"}</p>
+                  </div>
+                  <div className="rounded-2xl border border-primary/20 bg-white px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Total Siswa</p>
+                    <p className="mt-1 text-sm font-black text-stone-900">{reviewStudents.length}</p>
+                  </div>
+                  <div className="rounded-2xl border border-primary/20 bg-white px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Sumber</p>
+                    <p className="mt-1 text-sm font-black text-stone-900">Backend aktif</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-auto p-6">
+                {reviewStatus && (
+                  <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+                    <span className="material-symbols-outlined mr-2 align-middle text-[18px]">info</span>
+                    {reviewStatus}
+                  </div>
+                )}
+                <div className="mb-4 rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                    <div className="flex-1">
+                      <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-stone-500">NIS</label>
+                      <input
+                        value={studentForm.nis}
+                        onChange={(event) => setStudentForm((prev) => ({ ...prev, nis: event.target.value }))}
+                        placeholder="Contoh: NIS 202601001"
+                        className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold text-stone-900 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+                      />
+                    </div>
+                    <div className="flex-[1.4]">
+                      <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-stone-500">Nama Siswa</label>
+                      <input
+                        value={studentForm.name}
+                        onChange={(event) => setStudentForm((prev) => ({ ...prev, name: event.target.value }))}
+                        placeholder="Nama lengkap siswa"
+                        className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold text-stone-900 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSaveStudent}
+                        disabled={!canManageAccess || studentFormSaving}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-stone-900 shadow-lg shadow-primary/20 transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">{studentFormSaving ? "hourglass_top" : studentForm.id ? "save_as" : "person_add"}</span>
+                        {studentForm.id ? "Simpan Edit" : "Tambah Siswa"}
+                      </button>
+                      {studentForm.id && (
+                        <button
+                          type="button"
+                          onClick={resetStudentForm}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-bold text-stone-700 transition hover:bg-stone-50"
+                        >
+                          Batal Edit
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <p className="mt-3 text-[11px] font-semibold leading-5 text-stone-500">
+                    Form ini menyimpan satu siswa langsung ke kelas {reviewClass}. Pilih Edit pada tabel untuk mengubah NIS atau nama.
+                  </p>
+                </div>
+                <div className="overflow-hidden rounded-2xl border border-stone-200">
+                  <table className="min-w-full divide-y divide-stone-200">
+                    <thead className="bg-stone-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-widest text-stone-500">No</th>
+                        <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-widest text-stone-500">NIS</th>
+                        <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-widest text-stone-500">Nama</th>
+                        <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-widest text-stone-500">Kelas</th>
+                        <th className="px-4 py-3 text-right text-xs font-black uppercase tracking-widest text-stone-500">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100 bg-white">
+                      {reviewStudents.map((student, index) => (
+                        <tr key={student.id || student.nis} className="hover:bg-stone-50">
+                          <td className="px-4 py-3 text-sm font-bold text-stone-600">{index + 1}</td>
+                          <td className="px-4 py-3 text-sm font-bold text-stone-700">{student.nis || student.id || "-"}</td>
+                          <td className="px-4 py-3 text-sm font-black text-stone-900">{student.name || student.fullName || "-"}</td>
+                          <td className="px-4 py-3 text-sm font-semibold text-stone-600">{reviewClass}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleEditStudent(student)}
+                              disabled={!canManageAccess || deletingStudentId === "__all__"}
+                              className="mr-2 inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">edit</span>
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteStudent(student)}
+                              disabled={!canManageAccess || deletingStudentId === student.id || deletingStudentId === "__all__"}
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">
+                                {deletingStudentId === student.id ? "hourglass_top" : "delete"}
+                              </span>
+                              Hapus
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {!reviewLoading && reviewStudents.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-12 text-center text-sm font-semibold text-stone-500">
+                            Belum ada siswa aktif pada kelas ini.
+                          </td>
+                        </tr>
+                      )}
+                      {reviewLoading && (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-12 text-center text-sm font-semibold text-stone-500">
+                            Mengambil daftar siswa...
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 border-t border-stone-200 bg-stone-50 px-6 py-4 md:flex-row md:items-center md:justify-between">
+                <p className="text-xs font-semibold leading-5 text-stone-500">
+                  Hapus data kelas akan menghilangkan kelas ini dari Academic Management dan menonaktifkan siswa aktif di dalamnya.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDeleteReviewClass}
+                    disabled={!canManageAccess || !reviewClass || deletingStudentId === "__all__"}
+                    className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-black text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">{deletingStudentId === "__all__" ? "hourglass_top" : "delete_forever"}</span>
+                    Hapus Data Kelas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStudentReviewOpen(false)}
+                    className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-stone-900 shadow-lg shadow-primary/20 transition hover:bg-secondary"
+                  >
+                    Selesai
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

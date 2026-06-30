@@ -1066,6 +1066,21 @@ def sync_assessment_payload(student_id, topic_identifier, context_identifier, ra
         return record, assessments
 
 
+def clear_assessment_payload(student_id, topic_identifier, context_identifier=None):
+    with transaction.atomic():
+        topic = Topic.objects.get(code=topic_identifier, is_active=True)
+        context = None
+        try:
+            context = get_context(context_identifier or topic_identifier)
+        except (LearningContext.DoesNotExist, OperationalError):
+            context = None
+
+        Assessment.objects.filter(student_id=str(student_id), topic=topic).delete()
+        if context is not None:
+            StudentAssessment.objects.filter(student_id=str(student_id), context=context).delete()
+        return merged_assessments_for_context(context=context, topic=topic, student_id=student_id)
+
+
 def convert_legacy_assessments_to_contexts():
     for legacy in Assessment.objects.select_related("topic").all():
         context = LearningContext.objects.filter(legacy_topic_code=legacy.topic.code).first()
@@ -1129,6 +1144,7 @@ def calculate_student_context_score(student_id, context):
                 "ratingLabel": row.rubric_scale.label,
                 "rubricScore": f"{score:.2f}",
                 "levelDescription": (row.rubric_item.level_descriptors or {}).get(row.rubric_scale.code, ""),
+                "teacherNote": row.teacher_note,
             }
         )
 

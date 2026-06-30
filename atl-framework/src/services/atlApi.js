@@ -139,6 +139,15 @@ export const getCurrentUser = async () => {
   }
 };
 
+export const updateCurrentUser = async (payload = {}) => {
+  const data = unwrap(await api.put("auth/me/", payload));
+  if (data.user) {
+    localStorage.setItem("atl_current_user", JSON.stringify(data.user));
+    window.dispatchEvent(new Event("atl-auth-updated"));
+  }
+  return data.user || null;
+};
+
 export const getAssessmentDraft = (studentId, topicId) => {
   const studentKey = String(studentId);
   const topicKey = String(topicId);
@@ -243,6 +252,12 @@ export const getClasses = async () => {
 export const createClass = async (payload) => {
   const data = unwrap(await api.post("classes/", payload));
   return data.class || null;
+};
+
+export const deleteClass = async (classCode) => {
+  if (!classCode) throw new Error("Kode kelas tidak tersedia.");
+  await api.delete("classes/", { params: { code: classCode } });
+  return true;
 };
 
 export const importClassStudents = async ({ file, classCode = "", displayName = "", level = "Primary" }) => {
@@ -452,6 +467,23 @@ export const getStudents = async (className) => {
   }
 };
 
+export const createStudent = async (payload = {}) => {
+  const data = unwrap(await api.post("students/", payload));
+  return data.student || null;
+};
+
+export const updateStudent = async (studentId, payload = {}) => {
+  if (!studentId) throw new Error("ID siswa tidak tersedia.");
+  const data = unwrap(await api.put(`students/${studentId}/`, payload));
+  return data.student || null;
+};
+
+export const deleteStudent = async (studentId) => {
+  if (!studentId) throw new Error("ID siswa tidak tersedia.");
+  await api.delete(`students/${studentId}/`);
+  return true;
+};
+
 export const getTopics = async () => {
   try {
     const data = unwrap(await api.get("topics/"));
@@ -489,11 +521,27 @@ export const getLabels = async () => {
   return data;
 };
 
+const cachedTopicCriteria = (topicId) => (
+  Array.isArray(dummyATL[topicId]) ? dummyATL[topicId] : []
+);
+
+const criteriaWithMeta = (criteria = [], meta = {}) => {
+  const rows = [...(criteria || [])];
+  Object.defineProperty(rows, "__meta", {
+    value: meta,
+    enumerable: false,
+  });
+  return rows;
+};
+
 export const getCriteria = async (topicId) => {
+  const cachedCriteria = cachedTopicCriteria(topicId);
   let flowError = null;
   try {
     const flow = await getContextFlow(topicId);
-    if (flow.criteria?.length > 0) return flow.criteria;
+    if (flow.criteria?.length > 0) {
+      return criteriaWithMeta(flow.criteria, { source: "context", stale: false });
+    }
   } catch (error) {
     flowError = error;
   }
@@ -501,21 +549,37 @@ export const getCriteria = async (topicId) => {
   try {
     const data = unwrap(await api.get(`topics/${topicId}/criteria/`));
     if (Array.isArray(data.criteria) && data.criteria.length === 0) {
+      if (cachedCriteria.length > 0) {
+        return criteriaWithMeta(cachedCriteria, {
+          source: "cache",
+          stale: true,
+          message: "Mengambil data saat ini. Menampilkan data kriteria yang tersedia.",
+        });
+      }
       dummyATL[topicId] = [];
       saveATLData(dummyATL);
-      return [];
+      return criteriaWithMeta([], { source: "backend", stale: false });
     }
-    return mergeTopicCriteria(topicId, data.criteria || []);
+    return criteriaWithMeta(mergeTopicCriteria(topicId, data.criteria || []), { source: "backend", stale: false });
   } catch (error) {
+    if (cachedCriteria.length > 0) {
+      return criteriaWithMeta(cachedCriteria, {
+        source: "cache",
+        stale: true,
+        message: "Mengambil data saat ini. Menampilkan data kriteria yang tersedia.",
+      });
+    }
     raiseApiError(flowError || error, "Gagal mengambil rubrik/kriteria dari backend.");
   }
 };
 
 export const createCriterion = async (topicId, criterion) => {
+  let primaryError = null;
   try {
     const data = unwrap(await api.post(`topics/${topicId}/criteria/`, criterion));
     return data.criterion || null;
-  } catch {
+  } catch (error) {
+    primaryError = error;
     try {
       const data = unwrap(await api.post(`contexts/${topicId}/rubric-items/`, {
         ...criterion,
@@ -523,29 +587,29 @@ export const createCriterion = async (topicId, criterion) => {
         levelDescriptors: criterion.levels,
       }));
       return data.rubricItem ? criterionFromRubricItem(data.rubricItem) : null;
-    } catch {
-      return null;
+    } catch (fallbackError) {
+      raiseApiError(fallbackError || primaryError, "Gagal menyimpan kriteria baru ke backend.");
     }
   }
 };
 
 export const updateCriterion = async (criterionId, criterion) => {
-  if (!criterionId) return null;
+  if (!criterionId) throw new Error("ID kriteria tidak tersedia.");
   try {
     const data = unwrap(await api.put(`criteria/${criterionId}/`, criterion));
     return data.criterion || null;
-  } catch {
-    return null;
+  } catch (error) {
+    raiseApiError(error, "Gagal menyimpan perubahan kriteria ke backend.");
   }
 };
 
 export const deleteCriterion = async (criterionId) => {
-  if (!criterionId) return false;
+  if (!criterionId) throw new Error("ID kriteria tidak tersedia.");
   try {
     await api.delete(`criteria/${criterionId}/`);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    raiseApiError(error, "Gagal menghapus kriteria dari backend.");
   }
 };
 
@@ -627,7 +691,7 @@ export const saveAssessment = async (studentId, topicId, ratings, options = {}) 
     }
     markReportDataDirty();
     window.dispatchEvent(new Event("atl-data-updated"));
-    return { synced: true, assessments: data.assessments || null };
+    return { synced: true, status: data.status || "saved", assessments: data.assessments || null };
   } catch (error) {
     return { synced: false, error: assessmentSyncError(error) };
   }
@@ -639,7 +703,13 @@ export const saveAssessmentBatch = async (items = []) => {
     if (data.assessments) mergeAssessments(data.assessments);
     markReportDataDirty();
     window.dispatchEvent(new Event("atl-data-updated"));
-    return { synced: true, assessments: data.assessments || null, items: data.items || [] };
+    return {
+      synced: true,
+      assessments: data.assessments || null,
+      items: data.items || [],
+      savedCount: data.savedCount || 0,
+      clearedCount: data.clearedCount || 0,
+    };
   } catch (error) {
     return { synced: false, error: assessmentSyncError(error) };
   }

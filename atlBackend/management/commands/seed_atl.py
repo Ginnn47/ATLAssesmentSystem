@@ -129,7 +129,7 @@ class Command(BaseCommand):
                     "is_active": user_data.get("status", "Aktif") == "Aktif",
                 },
             )
-            if created or not user.has_usable_password():
+            if user_data.get("password"):
                 user.set_password(user_data["password"])
                 user.save(update_fields=["password"])
 

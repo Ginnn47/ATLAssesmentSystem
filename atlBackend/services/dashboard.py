@@ -140,13 +140,16 @@ def _criteria_slot_count(topic):
     return sum(len(item.get("atl") or []) for item in _criterion_dicts(topic))
 
 
-def _score_student_across_topics(student, topic_lookup, weights_by_topic, assessments):
+def _score_student_across_topics(student, topic_lookup, weights_by_topic, assessments, allowed_topic_ids=None):
     topic_scores = []
     category_values = defaultdict(list)
     filled = 0
     possible = 0
+    allowed_topics = set(allowed_topic_ids or [])
 
     for topic_id, ratings in (assessments.get(str(student.get("id")), {}) or {}).items():
+        if allowed_topics and topic_id not in allowed_topics:
+            continue
         topic = topic_lookup.get(topic_id)
         if not topic:
             continue
@@ -177,6 +180,52 @@ def _score_student_across_topics(student, topic_lookup, weights_by_topic, assess
             for category, values in category_values.items()
             if values
         },
+    }
+
+
+def _analysis_distribution(category_values):
+    rows = []
+    for category, color in ATL_ORDER:
+        values = category_values.get(category, [])
+        rows.append(
+            {
+                "category": category,
+                "score": round(sum(values) / len(values)) if values else 0,
+                "color": color,
+            }
+        )
+    return rows
+
+
+def _analysis_scope(key, label, students, topic_lookup, weights_by_topic, assessments, topic_ids=None, meta=None):
+    category_values = defaultdict(list)
+    scores = []
+    filled = 0
+    possible = 0
+
+    for student in students:
+        row = _score_student_across_topics(student, topic_lookup, weights_by_topic, assessments, topic_ids)
+        filled += row["filled"]
+        possible += row["possible"]
+        if row["score"] is not None:
+            scores.append(row["score"])
+        for category, value in row["categoryScores"].items():
+            category_values[category].append(value)
+
+    distribution = _analysis_distribution(category_values)
+    strongest = max(distribution, key=lambda item: item["score"], default={"category": "-"})
+    weakest = min([item for item in distribution if item["score"] > 0] or distribution, key=lambda item: item["score"], default={"category": "-"})
+    return {
+        "key": key,
+        "label": label,
+        "distribution": distribution,
+        "average": round(sum(scores) / len(scores)) if scores else 0,
+        "assessedStudents": len(scores),
+        "totalStudents": len(students),
+        "completion": round((filled / possible) * 100) if possible else 0,
+        "strongestATL": strongest["category"],
+        "focusATL": weakest["category"],
+        **(meta or {}),
     }
 
 
@@ -240,6 +289,7 @@ def _recent_activities(topic_lookup, all_students, weights_by_topic, assessment_
         recent.append(
             {
                 "type": event.get("type") or "Assessment",
+                "actor": event.get("evaluator") or "Sistem ATL",
                 "title": f"Nilai {_student_name(event.get('studentId'), all_students)} - {topic.label if topic else event.get('topicId')}",
                 "time": event.get("updatedAt") or now.isoformat(),
             }
@@ -309,6 +359,63 @@ def _build_dashboard_payload(topics, contexts, weights_by_topic, assessments, as
                 "color": color,
             }
         )
+
+    all_student_items = [student for students in all_students.values() for student in students]
+    analysis_scopes = [
+        _analysis_scope(
+            "all",
+            "Semua Kelas",
+            all_student_items,
+            topic_lookup,
+            weights_by_topic,
+            assessments,
+            meta={"type": "all"},
+        )
+    ]
+    for class_name, students in all_students.items():
+        analysis_scopes.append(
+            _analysis_scope(
+                f"class::{class_name}",
+                class_name,
+                students,
+                topic_lookup,
+                weights_by_topic,
+                assessments,
+                meta={"type": "class", "className": class_name},
+            )
+        )
+    for subject in Subject.objects.prefetch_related("topics").order_by("code"):
+        subject_topic_ids = [topic.code for topic in subject.topics.all()]
+        analysis_scopes.append(
+            _analysis_scope(
+                f"subject::{subject.code}",
+                subject.label,
+                all_student_items,
+                topic_lookup,
+                weights_by_topic,
+                assessments,
+                subject_topic_ids,
+                meta={"type": "subject", "subjectCode": subject.code, "subjectLabel": subject.label},
+            )
+        )
+        for class_name, students in all_students.items():
+            analysis_scopes.append(
+                _analysis_scope(
+                    f"class-subject::{class_name}::{subject.code}",
+                    f"{class_name} - {subject.label}",
+                    students,
+                    topic_lookup,
+                    weights_by_topic,
+                    assessments,
+                    subject_topic_ids,
+                    meta={
+                        "type": "class-subject",
+                        "className": class_name,
+                        "subjectCode": subject.code,
+                        "subjectLabel": subject.label,
+                    },
+                )
+            )
 
     trend_base = average or 58
     trend = [
@@ -381,6 +488,7 @@ def _build_dashboard_payload(topics, contexts, weights_by_topic, assessments, as
             {"label": "Topik Aktif", "value": str(topic_active), "note": "Topik pembelajaran yang sudah memiliki assessment.", "icon": "auto_stories", "color": "violet"},
         ],
         "atlDistribution": atl_distribution,
+        "analysisScopes": analysis_scopes,
         "trend": trend,
         "classComparison": class_rows,
         "attentionStudents": attention_students,

@@ -1,8 +1,10 @@
 import json
+import tempfile
 from itertools import combinations
+from pathlib import Path
 
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from .models import (
     Assessment,
@@ -242,6 +244,14 @@ class ContextualFuzzyAHPTests(TestCase):
 
 
 class ReportExcelExportTests(TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.settings_override = override_settings(BASE_DIR=Path(self.temp_dir.name))
+        self.settings_override.enable()
+        self.addCleanup(self.settings_override.disable)
+        self.archive_dir = Path(self.temp_dir.name) / "Document Output"
+
     def post_export(self, payload, origin=None):
         extra = {"HTTP_ORIGIN": origin} if origin else {}
         return self.client.post(
@@ -275,12 +285,17 @@ class ReportExcelExportTests(TestCase):
         self.assertEqual(response["Content-Type"], EXCEL_MIME)
         self.assertIn('attachment; filename="ATL_Report_Test.xlsx"', response["Content-Disposition"])
         self.assertEqual(response.content[:2], b"PK")
+        archived_file = self.archive_dir / response["X-Archived-Filename"]
+        self.assertEqual(archived_file.name, "ATL_Report_Test.xlsx")
+        self.assertTrue(archived_file.exists())
+        self.assertEqual(archived_file.read_bytes(), response.content)
 
     def test_report_export_requires_columns(self):
         response = self.post_export({"meta": {}, "columns": [], "rows": []})
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "Columns are required for Excel export.")
+        self.assertFalse(self.archive_dir.exists())
 
     def test_report_export_sanitizes_filename(self):
         response = self.post_export(
@@ -293,6 +308,24 @@ class ReportExcelExportTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('filename="ATL_Report_3A_IPA.xlsx"', response["Content-Disposition"])
+        self.assertTrue((self.archive_dir / "ATL_Report_3A_IPA.xlsx").exists())
+
+    def test_report_export_keeps_archive_history_when_filename_exists(self):
+        payload = {
+            "meta": {"filename": "ATL Same.xlsx"},
+            "columns": [{"key": "name", "label": "NAME"}],
+            "rows": [{"name": "Siswa A"}],
+        }
+
+        first = self.post_export(payload)
+        second = self.post_export(payload)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first["X-Archived-Filename"], "ATL_Same.xlsx")
+        self.assertNotEqual(first["X-Archived-Filename"], second["X-Archived-Filename"])
+        self.assertTrue(second["X-Archived-Filename"].startswith("ATL_Same_"))
+        self.assertEqual(len(list(self.archive_dir.glob("ATL_Same*.xlsx"))), 2)
 
     def test_report_export_allows_both_vite_dev_origins(self):
         payload = {
@@ -339,7 +372,7 @@ class AssessmentSyncTests(TestCase):
         self.subskill = list(self.rubric_item.subskills.all())[0]
         self.rating_key = f"singing_christmas_carol_{self.rubric_item.title}_{self.subskill.name}"
 
-    def post_assessment(self, ratings, teacher_note=""):
+    def post_assessment(self, ratings, teacher_note="", clear=False):
         return self.client.post(
             "/api/assessments/",
             data=json.dumps(
@@ -348,6 +381,7 @@ class AssessmentSyncTests(TestCase):
                     "topic": "singing_christmas_carol",
                     "ratings": ratings,
                     "teacherNote": teacher_note,
+                    "clear": clear,
                 }
             ),
             content_type="application/json",
@@ -383,7 +417,7 @@ class AssessmentSyncTests(TestCase):
         )
         response = self.client.post(
             "/api/assessments/",
-            data=json.dumps({"studentId": "1", "topic": empty_topic.code, "ratings": {}}),
+            data=json.dumps({"studentId": "1", "topic": empty_topic.code, "ratings": {"dummy": "Meeting Expectation"}}),
             content_type="application/json",
         )
 
@@ -421,7 +455,10 @@ class AssessmentSyncTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.json()["items"]), 2)
+        payload = response.json()
+        self.assertEqual(len(payload["items"]), 2)
+        self.assertEqual(payload["savedCount"], 2)
+        self.assertEqual([item["status"] for item in payload["items"]], ["saved", "saved"])
         self.assertEqual(Assessment.objects.filter(topic=self.topic, student_id__in=["1", "2"]).count(), 2)
         context_rows = list(
             StudentAssessment.objects.filter(context=self.context, student_id__in=["1", "2"])
@@ -436,13 +473,43 @@ class AssessmentSyncTests(TestCase):
             ],
         )
 
-    def test_assessment_post_replaces_removed_context_ratings(self):
+    def test_batch_assessment_rejects_empty_item_without_deleting_existing_value(self):
+        self.post_assessment({self.rating_key: "Meeting Expectation"})
+        response = self.client.post(
+            "/api/assessments/",
+            data=json.dumps(
+                {
+                    "items": [
+                        {"studentId": "1", "topic": "singing_christmas_carol", "ratings": {}},
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("clear=true", response.json()["error"])
+        legacy = Assessment.objects.get(student_id="1", topic=self.topic)
+        self.assertEqual(legacy.ratings[self.rating_key], "Meeting Expectation")
+        self.assertEqual(StudentAssessment.objects.filter(student_id="1", context=self.context).count(), 1)
+
+    def test_assessment_post_rejects_empty_ratings_without_explicit_clear(self):
         self.post_assessment({self.rating_key: "Meeting Expectation"})
         response = self.post_assessment({})
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("clear=true", response.json()["error"])
         legacy = Assessment.objects.get(student_id="1", topic=self.topic)
-        self.assertEqual(legacy.ratings, {})
+        self.assertEqual(legacy.ratings[self.rating_key], "Meeting Expectation")
+        self.assertEqual(StudentAssessment.objects.filter(student_id="1", context=self.context).count(), 1)
+
+    def test_assessment_post_clear_explicitly_removes_context_ratings(self):
+        self.post_assessment({self.rating_key: "Meeting Expectation"})
+        response = self.post_assessment({}, clear=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "cleared")
+        self.assertFalse(Assessment.objects.filter(student_id="1", topic=self.topic).exists())
         self.assertEqual(StudentAssessment.objects.filter(student_id="1", context=self.context).count(), 0)
 
     def test_assessment_preview_scores_draft_without_persisting_it(self):
@@ -466,8 +533,21 @@ class AssessmentSyncTests(TestCase):
         self.assertEqual(Assessment.objects.count(), 0)
         self.assertEqual(StudentAssessment.objects.count(), 0)
 
+    def test_report_with_configured_criteria_returns_no_data_before_assessment(self):
+        response = self.client.get(
+            "/api/reports/",
+            data={"class": "3A - Primary", "topic": "singing_christmas_carol"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        student = next(item for item in response.json()["students"] if str(item["id"]) == "1")
+        self.assertEqual(student["rawScore"], 0)
+        self.assertEqual(student["predikat"], "No Data")
+        self.assertEqual(student["assessedCount"], 0)
+        self.assertGreater(student["totalIndicators"], 0)
+
     def test_report_uses_saved_context_assessment(self):
-        self.post_assessment({self.rating_key: "Meeting Expectation"})
+        self.post_assessment({self.rating_key: "Meeting Expectation"}, teacher_note="Latihan artikulasi masih perlu dijaga.")
 
         response = self.client.get(
             "/api/reports/",
@@ -478,6 +558,9 @@ class AssessmentSyncTests(TestCase):
         student = next(item for item in response.json()["students"] if str(item["id"]) == "1")
         self.assertGreater(student["rawScore"], 0)
         self.assertGreater(student["assessedCount"], 0)
+        self.assertIn("Paling dikuasai:", student["teacherInsight"])
+        self.assertIn("Perlu dipelajari lebih lanjut:", student["teacherInsight"])
+        self.assertIn("Catatan guru: Latihan artikulasi masih perlu dijaga.", student["teacherInsight"])
 
 
 class WeightPersistenceTests(TestCase):
@@ -681,6 +764,29 @@ class TopicDeletionTests(TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertTrue(Topic.objects.get(code="singing_christmas_carol").is_active)
+
+
+class ClassDeletionTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="class-admin", password="atl12345")
+        UserProfile.objects.create(user=self.user, role_label="Admin", role_group="Admin", status="Aktif")
+        self.client.force_login(self.user)
+        self.school_class = SchoolClass.objects.create(code="9Z", display_name="9Z - Primary", level="Primary", is_active=True)
+        Student.objects.create(nis="NIS 9001", full_name="Student One", school_class=self.school_class, is_active=True)
+        teacher = User.objects.create_user(username="teacher-9z", password="atl12345")
+        self.profile = UserProfile.objects.create(user=teacher, role_label="Guru Wali Kelas", role_group="Guru Wali Kelas", status="Aktif")
+        self.profile.class_access.add(self.school_class)
+
+    def test_delete_class_hides_class_students_and_access(self):
+        response = self.client.delete("/api/classes/?code=9Z")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(SchoolClass.objects.get(code="9Z").is_active)
+        self.assertFalse(Student.objects.get(nis="NIS 9001").is_active)
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.class_access.filter(code="9Z").exists())
+        class_codes = [item["code"] for item in self.client.get("/api/classes/").json()["classes"]]
+        self.assertNotIn("9Z", class_codes)
 
 
 class AuthManagementTests(TestCase):

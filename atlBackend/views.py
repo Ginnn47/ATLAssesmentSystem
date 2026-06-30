@@ -1,6 +1,9 @@
+import logging
 import json
 import re
+from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.db import IntegrityError
@@ -52,6 +55,7 @@ from .services.contextual_atl import (
     reset_pairwise_scale_options,
     save_context_pairwise,
     selected_subskills,
+    clear_assessment_payload,
     merged_assessments_for_context,
     normalize_rubric_subskills,
     subskills_for_names,
@@ -69,8 +73,29 @@ from .services.labels import get_label_registry
 from .services.reports import build_reports
 
 
+logger = logging.getLogger(__name__)
+DOCUMENT_OUTPUT_DIR_NAME = "Document Output"
+
+
 def api_response(data, status=200):
     return JsonResponse(data, status=status, safe=False)
+
+
+def archive_export_workbook(filename, workbook):
+    archive_dir = Path(settings.BASE_DIR) / DOCUMENT_OUTPUT_DIR_NAME
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    target = archive_dir / filename
+    if target.exists():
+        timestamp = timezone.localtime().strftime("%Y%m%d_%H%M%S")
+        stem = target.stem
+        suffix = target.suffix or ".xlsx"
+        target = archive_dir / f"{stem}_{timestamp}{suffix}"
+        counter = 2
+        while target.exists():
+            target = archive_dir / f"{stem}_{timestamp}_{counter}{suffix}"
+            counter += 1
+    target.write_bytes(workbook)
+    return target.name
 
 
 def get_atl_profile(user):
@@ -121,13 +146,15 @@ def is_atl_user_active(user):
 
 
 ROLE_ADMIN = "ROLE_ADMIN"
+ROLE_ACADEMIC = "ROLE_ACADEMIC"
 ROLE_EVALUATOR = "ROLE_EVALUATOR"
 ROLE_HOMEROOM = "ROLE_HOMEROOM"
 ROLE_SUBJECT_COORDINATOR = "ROLE_SUBJECT_COORDINATOR"
 ROLE_ATL_EXPERT = "ROLE_ATL_EXPERT"
-ROLE_ORDER = [ROLE_ADMIN, ROLE_EVALUATOR, ROLE_HOMEROOM, ROLE_SUBJECT_COORDINATOR, ROLE_ATL_EXPERT]
+ROLE_ORDER = [ROLE_ADMIN, ROLE_ACADEMIC, ROLE_EVALUATOR, ROLE_HOMEROOM, ROLE_SUBJECT_COORDINATOR, ROLE_ATL_EXPERT]
 ROLE_LABELS = {
     ROLE_ADMIN: "Admin",
+    ROLE_ACADEMIC: "Akademik",
     ROLE_EVALUATOR: "Evaluator",
     ROLE_HOMEROOM: "Wali Kelas",
     ROLE_SUBJECT_COORDINATOR: "PJ Mapel",
@@ -147,10 +174,12 @@ def role_codes_for_user(user):
         ]
     ).lower()
     roles = set()
-    if user.is_superuser or "admin" in text or "akademik" in text or ROLE_ADMIN.lower() in text:
+    if user.is_superuser or "admin" in text or ROLE_ADMIN.lower() in text:
         roles.add(ROLE_ADMIN)
     else:
         roles.add(ROLE_EVALUATOR)
+    if "akademik" in text or ROLE_ACADEMIC.lower() in text:
+        roles.add(ROLE_ACADEMIC)
     if "wali" in text or ROLE_HOMEROOM.lower() in text:
         roles.add(ROLE_HOMEROOM)
     if "pj mapel" in text or "penanggung" in text or ROLE_SUBJECT_COORDINATOR.lower() in text:
@@ -170,8 +199,10 @@ def normalize_role_codes_from_payload(payload, user=None):
         payload.get("roleGroup") or payload.get("role_group") or "",
         payload.get("role") or "",
     ]).lower()
-    if user and (user.is_superuser or "admin" in text or "akademik" in text):
+    if user and (user.is_superuser or "admin" in text):
         roles.add(ROLE_ADMIN)
+    if "akademik" in text:
+        roles.add(ROLE_ACADEMIC)
     if "wali" in text:
         roles.add(ROLE_HOMEROOM)
     if "pj mapel" in text or "penanggung" in text:
@@ -187,6 +218,8 @@ def profile_fields_for_roles(role_codes):
     roles = [role for role in ROLE_ORDER if role in set(role_codes or [])]
     if ROLE_ADMIN in roles:
         return "Admin", "Admin"
+    if ROLE_ACADEMIC in roles:
+        return "Akademik", "Akademik"
     extension_roles = [role for role in roles if role != ROLE_EVALUATOR]
     labels = [ROLE_LABELS[role] for role in roles if role != ROLE_ADMIN]
     role_label = " + ".join(labels) if labels else "Evaluator"
@@ -196,7 +229,7 @@ def profile_fields_for_roles(role_codes):
         role_group = {
             ROLE_HOMEROOM: "Guru Wali Kelas",
             ROLE_SUBJECT_COORDINATOR: "PJ Mapel",
-            ROLE_ATL_EXPERT: "Fuzzy Expert",
+            ROLE_ATL_EXPERT: "ATL Expert",
         }[extension_roles[0]]
     else:
         role_group = "Guru / Evaluator"
@@ -204,7 +237,8 @@ def profile_fields_for_roles(role_codes):
 
 
 def is_admin_user(user):
-    return ROLE_ADMIN in role_codes_for_user(user)
+    roles = role_codes_for_user(user)
+    return ROLE_ADMIN in roles or ROLE_ACADEMIC in roles
 
 
 def require_active_user(request):
@@ -447,6 +481,19 @@ def persist_topic_weights_to_context(topic, weights, debug):
     return snapshot
 
 
+def invalidate_weights_for_topic(topic):
+    context = LearningContext.objects.filter(legacy_topic_code=topic.code).first()
+    FuzzyWeight.objects.filter(topic=topic).delete()
+    if context:
+        ContextWeightSnapshot.objects.filter(context=context).delete()
+
+
+def invalidate_weights_for_context(context):
+    ContextWeightSnapshot.objects.filter(context=context).delete()
+    if context.legacy_topic_code:
+        FuzzyWeight.objects.filter(topic__code=context.legacy_topic_code).delete()
+
+
 @csrf_exempt
 @require_http_methods(["POST", "OPTIONS"])
 def auth_login_api(request):
@@ -480,7 +527,7 @@ def auth_logout_api(request):
 
 
 @csrf_exempt
-@require_http_methods(["GET", "OPTIONS"])
+@require_http_methods(["GET", "PUT", "PATCH", "OPTIONS"])
 def auth_me_api(request):
     if request.method == "OPTIONS":
         return api_response({})
@@ -488,20 +535,46 @@ def auth_me_api(request):
         if request.user.is_authenticated:
             logout(request)
         return api_response({"user": None}, status=401)
+    if request.method in {"PUT", "PATCH"}:
+        payload = parse_body(request)
+        name = (payload.get("name") or "").strip()
+        if name:
+            first_name, _, last_name = name.partition(" ")
+            request.user.first_name = first_name
+            request.user.last_name = last_name
+        if "email" in payload:
+            request.user.email = (payload.get("email") or "").strip()
+        request.user.save(update_fields=["first_name", "last_name", "email"])
+        return api_response({"user": user_to_dict(request.user)})
     return api_response({"user": user_to_dict(request.user)})
 
 
 @csrf_exempt
-@require_http_methods(["GET", "POST", "OPTIONS"])
+@require_http_methods(["GET", "POST", "DELETE", "OPTIONS"])
 def classes_api(request):
     if request.method == "OPTIONS":
         return api_response({})
 
-    guard = require_admin_access(request) if request.method == "POST" else require_active_user(request)
+    guard = require_admin_access(request) if request.method in {"POST", "DELETE"} else require_active_user(request)
     if guard:
         return guard
 
     try:
+        if request.method == "DELETE":
+            code = normalize_class_code(request.GET.get("code") or request.GET.get("class") or request.GET.get("classCode"))
+            if not code:
+                return api_response({"error": "Class code is required"}, status=400)
+            school_class = SchoolClass.objects.filter(code=code).first()
+            if not school_class:
+                return api_response({"error": "Class not found"}, status=404)
+            with transaction.atomic():
+                Student.objects.filter(school_class=school_class, is_active=True).update(is_active=False)
+                for profile in UserProfile.objects.filter(class_access=school_class):
+                    profile.class_access.remove(school_class)
+                school_class.is_active = False
+                school_class.save(update_fields=["is_active"])
+            return api_response({"deleted": True, "classCode": code})
+
         if request.method == "POST":
             payload = parse_body(request)
             code = (payload.get("code") or payload.get("name") or "").strip().upper().replace(" ", "")
@@ -517,7 +590,7 @@ def classes_api(request):
             )
             return api_response({"class": class_to_dict(item)}, status=201)
 
-        return api_response({"classes": [class_to_dict(item) for item in SchoolClass.objects.all()]})
+        return api_response({"classes": [class_to_dict(item) for item in SchoolClass.objects.filter(is_active=True)]})
     except OperationalError:
         return api_response({"error": "Classes unavailable from database."}, status=503)
 
@@ -528,7 +601,7 @@ def class_students_import_api(request):
     if request.method == "OPTIONS":
         return api_response({})
 
-    guard = require_admin_access(request)
+    guard = require_admin_access(request) if request.method == "POST" else require_active_user(request)
     if guard:
         return guard
 
@@ -1051,9 +1124,6 @@ def contexts_api(request):
 def context_flow_api(request, context_id):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_active_user(request)
-    if guard:
-        return guard
 
     try:
         repair = ensure_assessable_topic(context_id) if not str(context_id).isdigit() else {}
@@ -1249,6 +1319,12 @@ def context_weights_calculate_api(request, context_id):
         )
         if persist:
             persist_context_weights_to_topic(context, result)
+            has_snapshot = ContextWeightSnapshot.objects.filter(context=context).exists()
+            has_topic_weight = True
+            if context.legacy_topic_code:
+                has_topic_weight = FuzzyWeight.objects.filter(topic__code=context.legacy_topic_code).exists()
+            if not has_snapshot or not has_topic_weight:
+                return api_response({"error": "Bobot gagal diverifikasi setelah disimpan. Silakan hitung dan simpan ulang."}, status=500)
         return api_response(result)
     except ValueError as error:
         return api_response({"error": str(error)}, status=400)
@@ -1406,6 +1482,7 @@ def topic_criteria_api(request, topic_id):
                     subskill=linked_subskill,
                     defaults={"order": context.mappings.count() + index, "is_active": True},
                 )
+            invalidate_weights_for_topic(topic)
         return api_response({"criterion": criterion_to_dict(criterion), "topic": topic_to_dict(topic)}, status=201)
     except IntegrityError:
         return api_response({"error": "Gagal membuat context rubric untuk kriteria ini."}, status=400)
@@ -1437,6 +1514,7 @@ def criterion_detail_api(request, criterion_id):
                 if context:
                     ContextRubricItem.objects.filter(context=context, title=old_name).delete()
                 cleanup_references(topic, old_name, old_atl)
+                invalidate_weights_for_topic(topic)
             return api_response({"deleted": True, "topic": topic_to_dict(topic)})
 
         payload = parse_body(request)
@@ -1457,6 +1535,7 @@ def criterion_detail_api(request, criterion_id):
             if old_name != criterion.name and context:
                 ContextRubricItem.objects.filter(context=context, title=old_name).exclude(title=criterion.name).delete()
             sync_references(criterion.topic, old_name, old_atl, criterion.name, criterion.atl or [])
+            invalidate_weights_for_topic(criterion.topic)
         return api_response({"criterion": criterion_to_dict(criterion), "topic": topic_to_dict(criterion.topic)})
     except Criterion.DoesNotExist:
         try:
@@ -1464,25 +1543,44 @@ def criterion_detail_api(request, criterion_id):
             subject_guard = require_context_subject_access(request, rubric_item.context, [ROLE_ATL_EXPERT])
             if subject_guard:
                 return subject_guard
+            old_name = rubric_item.title
+            old_subskills = list(rubric_item.subskills.all()) or [rubric_item.subskill]
+            old_atl = [subskill.name for subskill in old_subskills if subskill]
             if request.method == "DELETE":
-                rubric_item.delete()
+                context = rubric_item.context
+                with transaction.atomic():
+                    topic = Topic.objects.filter(code=context.legacy_topic_code).first() if context.legacy_topic_code else None
+                    rubric_item.delete()
+                    if topic:
+                        cleanup_references(topic, old_name, old_atl)
+                        invalidate_weights_for_topic(topic)
+                    else:
+                        invalidate_weights_for_context(context)
                 return api_response({"deleted": True})
 
             payload = parse_body(request)
             subskills = find_subskills_for_payload(payload)
             subskill = (subskills[0] if subskills else None) or find_subskill_for_payload(rubric_item.context, payload) or rubric_item.subskill
-            rubric_item.title = (payload.get("kriteria") or payload.get("name") or rubric_item.title).strip()
-            rubric_item.subskill = subskill
-            rubric_item.criteria_topic = payload.get("criteriaTopic") or payload.get("criteria_topic") or rubric_item.criteria_topic
-            rubric_item.level_descriptors = payload.get("levels") or payload.get("levelDescriptors") or rubric_item.level_descriptors
-            rubric_item.save()
-            selected_item_subskills = sync_rubric_item_subskills(rubric_item, subskills or [subskill])
-            for index, linked_subskill in enumerate(selected_item_subskills):
-                ContextATLMapping.objects.update_or_create(
-                    context=rubric_item.context,
-                    subskill=linked_subskill,
-                    defaults={"order": rubric_item.context.mappings.count() + index, "is_active": True},
-                )
+            context = rubric_item.context
+            with transaction.atomic():
+                rubric_item.title = (payload.get("kriteria") or payload.get("name") or rubric_item.title).strip()
+                rubric_item.subskill = subskill
+                rubric_item.criteria_topic = payload.get("criteriaTopic") or payload.get("criteria_topic") or rubric_item.criteria_topic
+                rubric_item.level_descriptors = payload.get("levels") or payload.get("levelDescriptors") or rubric_item.level_descriptors
+                rubric_item.save()
+                selected_item_subskills = sync_rubric_item_subskills(rubric_item, subskills or [subskill])
+                for index, linked_subskill in enumerate(selected_item_subskills):
+                    ContextATLMapping.objects.update_or_create(
+                        context=context,
+                        subskill=linked_subskill,
+                        defaults={"order": context.mappings.count() + index, "is_active": True},
+                    )
+                topic = Topic.objects.filter(code=context.legacy_topic_code).first() if context.legacy_topic_code else None
+                if topic:
+                    sync_references(topic, old_name, old_atl, rubric_item.title, [subskill.name for subskill in selected_item_subskills])
+                    invalidate_weights_for_topic(topic)
+                else:
+                    invalidate_weights_for_context(context)
             linked_subskills = list(rubric_item.subskills.select_related("category").all()) or [rubric_item.subskill]
             category_names = []
             for linked_subskill in linked_subskills:
@@ -1675,8 +1773,21 @@ def assessments_api(request):
                 topic_identifier = item.get("topic") or item.get("topicId")
                 context_identifier = item.get("context") or item.get("contextId") or topic_identifier
                 student_value = item.get("studentId") or item.get("student_id")
+                ratings = item.get("ratings") or {}
+                clear_requested = bool(item.get("clear"))
                 if student_value is None or student_value == "" or not topic_identifier:
                     return api_response({"error": "Each assessment item requires studentId and topic."}, status=400)
+                if not isinstance(ratings, dict):
+                    return api_response({"error": "Assessment ratings must be an object."}, status=400)
+                if not ratings and not clear_requested:
+                    return api_response(
+                        {
+                            "error": "Tidak ada nilai untuk disimpan. Kirim clear=true jika ingin menghapus nilai.",
+                            "studentId": str(student_value),
+                            "topic": topic_identifier,
+                        },
+                        status=400,
+                    )
                 topic_guard = assessment_topic_error(topic_identifier, context_identifier)
                 if topic_guard:
                     return topic_guard
@@ -1685,45 +1796,84 @@ def assessments_api(request):
                         str(student_value),
                         topic_identifier,
                         context_identifier,
-                        item.get("ratings") or {},
+                        ratings,
                         item.get("teacherNote") or item.get("teacher_note") or "",
+                        clear_requested,
                     )
                 )
 
             saved_items = []
             merged_assessments = {}
             with transaction.atomic():
-                for student_id, topic_identifier, context_identifier, ratings, teacher_note in normalized_items:
-                    record, assessments = sync_assessment_payload(
-                        student_id=student_id,
-                        topic_identifier=topic_identifier,
-                        context_identifier=context_identifier,
-                        ratings=ratings,
-                        evaluator=evaluator,
-                        teacher_note=teacher_note,
-                    )
-                    saved_items.append({"studentId": record.student_id, "topic": record.topic.code, "ratings": record.ratings})
+                for student_id, topic_identifier, context_identifier, ratings, teacher_note, clear_requested in normalized_items:
+                    if clear_requested:
+                        assessments = clear_assessment_payload(
+                            student_id=student_id,
+                            topic_identifier=topic_identifier,
+                            context_identifier=context_identifier,
+                        )
+                        saved_items.append({"studentId": student_id, "topic": topic_identifier, "ratings": {}, "status": "cleared"})
+                    else:
+                        record, assessments = sync_assessment_payload(
+                            student_id=student_id,
+                            topic_identifier=topic_identifier,
+                            context_identifier=context_identifier,
+                            ratings=ratings,
+                            evaluator=evaluator,
+                            teacher_note=teacher_note,
+                        )
+                        saved_items.append({"studentId": record.student_id, "topic": record.topic.code, "ratings": record.ratings, "status": "saved"})
                     for student_key, topic_map in assessments.items():
                         merged_assessments.setdefault(str(student_key), {}).update(topic_map or {})
-            return api_response({"items": saved_items, "assessments": merged_assessments, "evaluator": evaluator})
+            return api_response(
+                {
+                    "items": saved_items,
+                    "savedCount": len([item for item in saved_items if item["status"] == "saved"]),
+                    "clearedCount": len([item for item in saved_items if item["status"] == "cleared"]),
+                    "assessments": merged_assessments,
+                    "evaluator": evaluator,
+                }
+            )
 
         topic_identifier = payload.get("topic") or payload.get("topicId")
         context_identifier = payload.get("context") or payload.get("contextId") or topic_identifier
         student_value = payload.get("studentId") or payload.get("student_id")
+        ratings = payload.get("ratings") or {}
+        clear_requested = bool(payload.get("clear"))
         if student_value is None or student_value == "" or not topic_identifier:
             return api_response({"error": "studentId and topic are required."}, status=400)
+        if not isinstance(ratings, dict):
+            return api_response({"error": "Assessment ratings must be an object."}, status=400)
+        if not ratings and not clear_requested:
+            return api_response({"error": "Tidak ada nilai untuk disimpan. Kirim clear=true jika ingin menghapus nilai."}, status=400)
         topic_guard = assessment_topic_error(topic_identifier, context_identifier)
         if topic_guard:
             return topic_guard
+        if clear_requested:
+            assessments = clear_assessment_payload(
+                student_id=str(student_value),
+                topic_identifier=topic_identifier,
+                context_identifier=context_identifier,
+            )
+            return api_response(
+                {
+                    "studentId": str(student_value),
+                    "topic": topic_identifier,
+                    "ratings": {},
+                    "status": "cleared",
+                    "assessments": assessments,
+                    "evaluator": evaluator,
+                }
+            )
         record, assessments = sync_assessment_payload(
             student_id=str(student_value),
             topic_identifier=topic_identifier,
             context_identifier=context_identifier,
-            ratings=payload.get("ratings") or {},
+            ratings=ratings,
             evaluator=evaluator,
             teacher_note=payload.get("teacherNote") or payload.get("teacher_note") or "",
         )
-        return api_response({"studentId": record.student_id, "topic": record.topic.code, "ratings": record.ratings, "assessments": assessments, "evaluator": evaluator})
+        return api_response({"studentId": record.student_id, "topic": record.topic.code, "ratings": record.ratings, "status": "saved", "assessments": assessments, "evaluator": evaluator})
     except Topic.DoesNotExist:
         return api_response(
             {"assessments": {}} if request.method == "GET" else {"error": "Topik ini belum tersedia untuk penilaian. Pilih topik aktif dari daftar pembelajaran."},
@@ -1738,9 +1888,6 @@ def assessments_api(request):
 def assessments_preview_api(request):
     if request.method == "OPTIONS":
         return api_response({})
-    guard = require_any_role(request, [ROLE_EVALUATOR])
-    if guard:
-        return guard
 
     payload = parse_body(request)
     raw_items = payload.get("items")
@@ -1856,18 +2003,12 @@ def reports_api(request):
             ensure_assessable_topic(topic_id)
         try:
             context = get_context(context_id)
-            subject_guard = require_context_subject_access(request, context, [ROLE_SUBJECT_COORDINATOR])
-            if subject_guard:
-                return subject_guard
             if context.rubric_items.exists():
                 return api_response(build_context_report(class_name, context))
         except (LearningContext.DoesNotExist, OperationalError):
             pass
 
         topic = get_topic(topic_id)
-        subject_guard = require_subject_access(request, topic.subject, [ROLE_SUBJECT_COORDINATOR])
-        if subject_guard:
-            return subject_guard
         criteria = [criterion_to_dict(item) for item in topic.criteria.all()]
         weights_record = FuzzyWeight.objects.filter(topic=topic).first()
         weights = weights_record.weights if weights_record else {}
@@ -1888,18 +2029,9 @@ def reports_export_api(request):
     if request.method == "OPTIONS":
         response = HttpResponse(status=204)
     else:
-        auth_guard = require_any_role(request, [ROLE_SUBJECT_COORDINATOR])
-        if auth_guard:
-            return auth_guard
         payload = parse_body(request)
         meta = payload.get("meta") or {}
         topic_id = meta.get("topicId") or meta.get("topic") or payload.get("topicId") or payload.get("topic")
-        if topic_id:
-            topic = Topic.objects.filter(code=topic_id, is_active=True).select_related("subject").first()
-            if topic:
-                subject_guard = require_subject_access(request, topic.subject, [ROLE_SUBJECT_COORDINATOR])
-                if subject_guard:
-                    return subject_guard
         columns = payload.get("columns") or []
         rows = payload.get("rows") or []
         if not isinstance(columns, list) or not columns:
@@ -1912,8 +2044,15 @@ def reports_export_api(request):
             return response
         filename = safe_excel_filename(meta.get("filename") or "ATL_Report")
         workbook = build_report_workbook(meta, columns, rows)
+        archived_filename = ""
+        try:
+            archived_filename = archive_export_workbook(filename, workbook)
+        except Exception:
+            logger.warning("Failed to archive exported workbook %s", filename, exc_info=True)
         response = HttpResponse(workbook, content_type=EXCEL_MIME)
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        if archived_filename:
+            response["X-Archived-Filename"] = archived_filename
 
-    response["Access-Control-Expose-Headers"] = "Content-Disposition"
+    response["Access-Control-Expose-Headers"] = "Content-Disposition, X-Archived-Filename"
     return response

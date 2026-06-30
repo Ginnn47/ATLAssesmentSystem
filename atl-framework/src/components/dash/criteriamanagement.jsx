@@ -176,14 +176,26 @@ export default function CriteriaManagement() {
     window.dispatchEvent(new Event("atl-data-updated"));
   };
 
+  const applyCriteriaResult = (topicId, criteria = []) => {
+    const rows = Array.isArray(criteria) ? [...criteria] : [];
+    dummyATL[topicId] = rows;
+    saveATLData(dummyATL);
+    const meta = criteria?.__meta || {};
+    if (meta.stale) {
+      setBackendError(meta.message || "Mengambil data saat ini. Menampilkan data kriteria yang tersedia.");
+    } else {
+      setBackendError("");
+    }
+    return meta;
+  };
+
   const refreshSelectedSubtopicFromBackend = async (topicId = selectedSubtopic) => {
     await getTopics();
     const nextSubjects = buildSubjects(currentUser);
     setSubjects(nextSubjects);
     if (topicId) {
       const criteria = await getCriteria(topicId);
-      dummyATL[topicId] = criteria || [];
-      saveATLData(dummyATL);
+      applyCriteriaResult(topicId, criteria);
     }
     setDataVersion((v) => v + 1);
     window.dispatchEvent(new Event("atl-topics-updated"));
@@ -210,7 +222,7 @@ export default function CriteriaManagement() {
           setSelectedSubtopic(firstSubject?.topics?.[0]?.id || "");
         }
         if (topicsResult.status === "rejected") {
-          setBackendError("Backend belum tersambung. Menampilkan data terakhir.");
+          setBackendError("Mengambil data saat ini. Menampilkan data yang tersedia.");
         } else {
           setBackendError("");
         }
@@ -296,11 +308,26 @@ export default function CriteriaManagement() {
   useEffect(() => {
     let cancelled = false;
     if (!selectedSubtopic) return () => { cancelled = true; };
-    Promise.all([getCriteria(selectedSubtopic), getATLHierarchy()])
-      .then(([, hierarchy]) => {
+    Promise.allSettled([getCriteria(selectedSubtopic), getATLHierarchy()])
+      .then(([criteriaResult, hierarchyResult]) => {
         if (cancelled) return;
-        setAtlHierarchy(hierarchy || []);
-        setBackendError("");
+        const messages = [];
+        if (criteriaResult.status === "fulfilled") {
+          const meta = applyCriteriaResult(selectedSubtopic, criteriaResult.value);
+          if (meta.stale && meta.message) messages.push(meta.message);
+        } else {
+          messages.push("Mengambil data saat ini. Menampilkan data kriteria yang tersedia.");
+        }
+
+        const hierarchy = hierarchyResult.status === "fulfilled" ? hierarchyResult.value : atlHierarchy;
+        if (hierarchyResult.status === "fulfilled") {
+          setAtlHierarchy(hierarchy || []);
+        } else {
+          messages.push("Mengambil data saat ini. Menampilkan pilihan ATL yang tersedia.");
+        }
+
+        if (messages.length > 0) setBackendError(messages[0]);
+        else setBackendError("");
         const firstCategory = hierarchy?.[0];
         const firstSubskill = firstCategory?.subskills?.[0];
         if (!formData.categoryId && firstCategory && firstSubskill) {
@@ -316,11 +343,6 @@ export default function CriteriaManagement() {
           }));
         }
         if (!cancelled) setDataVersion((v) => v + 1);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setBackendError(error.message || "Backend belum tersambung. Menampilkan data terakhir.");
-        setDataVersion((v) => v + 1);
       });
     return () => {
       cancelled = true;
@@ -448,9 +470,15 @@ export default function CriteriaManagement() {
 
     if (editingIndex !== null) {
       const previousCriterion = dummyATL[selectedSubtopic][editingIndex];
-      const savedCriterion = await updateCriterion(previousCriterion.id, normalizedFormData);
+      let savedCriterion = null;
+      try {
+        savedCriterion = await updateCriterion(previousCriterion.id, normalizedFormData);
+      } catch (error) {
+        alert(error.message || "Gagal menyimpan perubahan kriteria ke backend.");
+        return;
+      }
       if (!savedCriterion?.id) {
-        alert("Gagal menyimpan perubahan kriteria ke backend. Pastikan sudah login.");
+        alert("Gagal menyimpan perubahan kriteria ke backend.");
         return;
       }
       dummyATL[selectedSubtopic][editingIndex] = {
@@ -466,9 +494,15 @@ export default function CriteriaManagement() {
       syncCriterionReferences(selectedSubtopic, previousCriterion, dummyATL[selectedSubtopic][editingIndex]);
       setEditingIndex(null);
     } else {
-      const createdCriterion = await createCriterion(selectedSubtopic, normalizedFormData);
+      let createdCriterion = null;
+      try {
+        createdCriterion = await createCriterion(selectedSubtopic, normalizedFormData);
+      } catch (error) {
+        alert(error.message || "Gagal menyimpan kriteria baru ke backend.");
+        return;
+      }
       if (!createdCriterion?.id) {
-        alert("Gagal menyimpan kriteria baru ke backend. Pastikan sudah login.");
+        alert("Gagal menyimpan kriteria baru ke backend.");
         return;
       }
       if (!dummyATL[selectedSubtopic]) dummyATL[selectedSubtopic] = [];
@@ -544,9 +578,15 @@ export default function CriteriaManagement() {
   const handleDeleteCriteria = async (index) => {
     if (confirm("Apakah Anda yakin ingin menghapus kriteria ini?")) {
       const deletedCriterion = dummyATL[selectedSubtopic][index];
-      const deleted = await deleteCriterion(deletedCriterion?.id);
+      let deleted = false;
+      try {
+        deleted = await deleteCriterion(deletedCriterion?.id);
+      } catch (error) {
+        alert(error.message || "Gagal menghapus kriteria dari backend.");
+        return;
+      }
       if (!deleted) {
-        alert("Gagal menghapus kriteria dari backend. Pastikan sudah login.");
+        alert("Gagal menghapus kriteria dari backend.");
         return;
       }
       dummyATL[selectedSubtopic].splice(index, 1);
@@ -591,7 +631,7 @@ export default function CriteriaManagement() {
     <div className="space-y-8">
       {backendError && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-800">
-          <span className="material-symbols-outlined mr-2 align-middle text-[18px]">sync_problem</span>
+          <span className="material-symbols-outlined mr-2 align-middle text-[18px]">sync</span>
           {backendError}
         </div>
       )}
