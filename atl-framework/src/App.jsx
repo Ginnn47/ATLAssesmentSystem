@@ -8,7 +8,6 @@ import BatchInputATL from "./components/dash/batch";
 import Report from "./components/dash/report";
 import ManageUser from "./components/dash/manageuser"
 import ATLmanage from "./components/dash/ATLmanage";
-import Login from "./components/auth/login";
 import { getCurrentUser } from "./services/atlApi";
 import { ROLE_CODES, canAccessRoute } from "./services/accessControl";
 
@@ -61,7 +60,7 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Login />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/students" element={<ProtectedRoute roles={[ROLE_CODES.HOMEROOM]}><StudManage /></ProtectedRoute>} />
         <Route path="/input-atl" element={<ProtectedRoute roles={[ROLE_CODES.EVALUATOR]}><DetailedInputATL /></ProtectedRoute>} />

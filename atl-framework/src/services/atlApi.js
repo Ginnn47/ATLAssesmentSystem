@@ -27,6 +27,23 @@ const clearCachedAuth = () => {
   localStorage.removeItem("atl_current_user");
 };
 
+const PRESENTATION_ADMIN_USER = {
+  id: "presentation-admin",
+  username: "admin",
+  name: "Afrizal Haykal",
+  email: "admin@atl.local",
+  role: "Admin",
+  roleLabel: "Admin",
+  roleGroup: "Admin",
+  roles: ["ROLE_ADMIN"],
+  roleCodes: ["ROLE_ADMIN"],
+  isSuperuser: true,
+  classAccess: [],
+  subjectAccess: [],
+};
+
+const getPresentationAdminUser = () => ({ ...PRESENTATION_ADMIN_USER });
+
 const readStorageObject = (key) => {
   try {
     return JSON.parse(localStorage.getItem(key) || "{}");
@@ -132,10 +149,14 @@ export const getCurrentUser = async () => {
   try {
     const data = unwrap(await api.get("auth/me/"));
     if (data.user) localStorage.setItem("atl_current_user", JSON.stringify(data.user));
-    return data.user || null;
+    if (data.user) return data.user;
+    const presentationUser = getPresentationAdminUser();
+    localStorage.setItem("atl_current_user", JSON.stringify(presentationUser));
+    return presentationUser;
   } catch {
-    clearCachedAuth();
-    return null;
+    const presentationUser = getPresentationAdminUser();
+    localStorage.setItem("atl_current_user", JSON.stringify(presentationUser));
+    return presentationUser;
   }
 };
 

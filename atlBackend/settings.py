@@ -25,8 +25,14 @@ SECRET_KEY = 'django-insecure-0#!9$(q+)wkp4g0y(zh9vwcvc0+c%y4*6g6%it#+zp@tgo8t(6
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"]
-CSRF_TRUSTED_ORIGINS = ["http://127.0.0.1:5173", "http://localhost:5173"]
+ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver", "https://machinist-anyway-brunt.ngrok-free.dev"]
+CSRF_TRUSTED_ORIGINS = ["http://127.0.0.1:5173", "http://localhost:5173", "https://delirious-capped-cinnamon.ngrok-free.dev"]
+CORS_ALLOWED_ORIGINS = [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "https://delirious-capped-cinnamon.ngrok-free.dev"
+]
+
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
