@@ -14,7 +14,6 @@ import {
   hydrateTopic,
   previewAssessmentScores,
   saveAssessmentBatch,
-  saveAssessmentDrafts,
   saveAssessmentFilterState,
   updateAssessmentLiveDraft,
 } from "../../services/atlApi";
@@ -487,14 +486,6 @@ export default function BatchInputATL() {
     })
   );
   const hasAssessmentRatings = (item) => Object.values(item?.ratings || {}).some(Boolean);
-
-  const handleSaveDraft = () => {
-    if (!dataKey || columns.length === 0 || students.length === 0) return;
-    saveAssessmentDrafts(buildAssessmentItems());
-    hasLocalChangesRef.current = false;
-    setSaveStatus("draft");
-    setSaveMessage(`Perubahan ${students.length} siswa tersimpan sementara.`);
-  };
 
   const handleSend = async () => {
     if (!dataKey || topicNeedsCriteria || columns.length === 0 || students.length === 0) {

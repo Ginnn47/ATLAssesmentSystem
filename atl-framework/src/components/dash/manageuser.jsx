@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "./sidebar";
-import { createStudent, deleteClass, deleteStudent, getClasses, getCurrentUser, getStudents, getTopics, getUsers, importClassStudents, updateStudent, updateUser } from "../../services/atlApi";
+import { createStudent, createUser, deleteClass, deleteStudent, getClasses, getCurrentUser, getStudents, getTopics, getUsers, importClassStudents, updateStudent, updateUser } from "../../services/atlApi";
 import { ROLE_CODES, getGrantedFeatures, getUserRoleCodes, isAdminUser } from "../../services/accessControl";
 
 const roleColors = {
@@ -72,6 +72,7 @@ const evaluatorRoleOptions = [
 ];
 
 const roleOptionByKey = Object.fromEntries(evaluatorRoleOptions.map((role) => [role.key, role]));
+const configurableEvaluatorRoleOptions = evaluatorRoleOptions.filter((role) => role.key !== ROLE_CODES.EVALUATOR);
 
 const deriveEvaluatorRoles = (user) => {
   const roles = getUserRoleCodes(user).filter((role) => role !== ROLE_CODES.ADMIN);
@@ -89,6 +90,41 @@ const composeEvaluatorRoleFields = (roleKeys) => {
       ? roleOptionByKey[extensionKeys[0]].group
       : "Guru / Evaluator";
   return { roleLabel, roleGroup, role: roleLabel, roles: normalizedKeys, roleCodes: normalizedKeys };
+};
+
+const emptyUserForm = () => ({
+  name: "",
+  username: "",
+  email: "",
+  password: "",
+  nip: "",
+  status: "Aktif",
+  roles: [ROLE_CODES.EVALUATOR],
+  classAccess: [],
+  subjectAccess: [],
+});
+
+const getStudentName = (student) => student?.name || student?.fullName || "";
+
+const generateNextStudentNis = (students = []) => {
+  const numericNis = students
+    .map((student) => String(student?.nis || "").trim())
+    .filter(Boolean)
+    .map((nis) => {
+      const match = nis.match(/^(.*?)(\d{2})$/);
+      return match ? { original: nis, prefix: match[1], suffix: Number(match[2]) } : null;
+    })
+    .filter(Boolean);
+  if (numericNis.length === 0) return "";
+
+  const prefixCounts = numericNis.reduce((acc, item) => {
+    acc[item.prefix] = (acc[item.prefix] || 0) + 1;
+    return acc;
+  }, {});
+  const preferredPrefix = Object.entries(prefixCounts).sort((left, right) => right[1] - left[1])[0]?.[0];
+  const samePrefixItems = numericNis.filter((item) => item.prefix === preferredPrefix);
+  const nextSuffix = Math.max(...samePrefixItems.map((item) => item.suffix)) + 1;
+  return `${preferredPrefix}${String(nextSuffix).padStart(2, "0")}`;
 };
 
 export default function ManageUser() {
@@ -112,6 +148,10 @@ export default function ManageUser() {
   const [deletingStudentId, setDeletingStudentId] = useState(null);
   const [studentForm, setStudentForm] = useState({ id: null, nis: "", name: "" });
   const [studentFormSaving, setStudentFormSaving] = useState(false);
+  const [userFormOpen, setUserFormOpen] = useState(false);
+  const [userForm, setUserForm] = useState(emptyUserForm);
+  const [userFormStatus, setUserFormStatus] = useState("");
+  const [userFormSaving, setUserFormSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,6 +223,11 @@ export default function ManageUser() {
       return matchesSearch && matchesRole;
     });
   }, [users, search, roleFilter, subjectLabelByCode]);
+
+  const suggestedStudentNis = useMemo(
+    () => generateNextStudentNis(reviewStudents),
+    [reviewStudents]
+  );
 
   const assignableTeachers = useMemo(
     () =>
@@ -256,18 +301,19 @@ export default function ManageUser() {
     setStudentReviewOpen(true);
     setReviewStudents([]);
     setStudentForm({ id: null, nis: "", name: "" });
-    await refreshClassStudents(classCode);
+    const students = await refreshClassStudents(classCode);
+    setStudentForm({ id: null, nis: generateNextStudentNis(students), name: "" });
   };
 
   const resetStudentForm = () => {
-    setStudentForm({ id: null, nis: "", name: "" });
+    setStudentForm({ id: null, nis: generateNextStudentNis(reviewStudents), name: "" });
   };
 
   const handleEditStudent = (student) => {
     setStudentForm({
       id: student.id,
-      nis: student.nis || "",
-      name: student.name || student.fullName || "",
+      nis: student.nis || suggestedStudentNis || "",
+      name: getStudentName(student),
     });
   };
 
@@ -300,7 +346,8 @@ export default function ManageUser() {
       } else {
         await refreshClassStudents(reviewClass);
       }
-      resetStudentForm();
+      const latestStudents = await refreshClassStudents(reviewClass);
+      setStudentForm({ id: null, nis: generateNextStudentNis(latestStudents), name: "" });
       setReviewStatus(studentForm.id ? "Data siswa diperbarui." : "Siswa baru ditambahkan.");
     } catch (error) {
       setReviewStatus(error.response?.data?.error || error.message || "Data siswa belum bisa disimpan saat ini.");
@@ -348,6 +395,70 @@ export default function ManageUser() {
       await refreshClassStudents(reviewClass);
     } finally {
       setDeletingStudentId(null);
+    }
+  };
+
+  const openAddUserPanel = () => {
+    if (!canManageAccess) return;
+    setUserForm(emptyUserForm());
+    setUserFormStatus("");
+    setUserFormOpen(true);
+  };
+
+  const updateUserFormList = (field, value) => {
+    setUserForm((prev) => {
+      const current = normalizeAccessList(prev[field]);
+      const next = current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value];
+      return { ...prev, [field]: next };
+    });
+  };
+
+  const toggleUserFormRole = (roleKey) => {
+    if (roleKey === ROLE_CODES.EVALUATOR) return;
+    setUserForm((prev) => {
+      const current = deriveEvaluatorRoles(prev);
+      const next = current.includes(roleKey)
+        ? current.filter((item) => item !== roleKey)
+        : [...current, roleKey];
+      return { ...prev, roles: next.includes(ROLE_CODES.EVALUATOR) ? next : [ROLE_CODES.EVALUATOR, ...next] };
+    });
+  };
+
+  const handleCreateUser = async () => {
+    if (!canManageAccess || userFormSaving) return;
+    const selectedRoles = deriveEvaluatorRoles(userForm);
+    const payload = {
+      ...userForm,
+      ...composeEvaluatorRoleFields(selectedRoles),
+      name: userForm.name.trim(),
+      username: userForm.username.trim(),
+      email: userForm.email.trim(),
+      password: userForm.password,
+      nip: userForm.nip.trim(),
+    };
+    if (!payload.name || !payload.username || !payload.email || !payload.password || selectedRoles.length === 0) {
+      setUserFormStatus("Lengkapi nama, username, email, password, dan role terlebih dahulu.");
+      return;
+    }
+    if (payload.password.length < 8) {
+      setUserFormStatus("Password minimal 8 karakter.");
+      return;
+    }
+
+    setUserFormSaving(true);
+    setUserFormStatus("Menyimpan user baru...");
+    try {
+      const savedUser = await createUser(payload);
+      if (savedUser) setUsers((prev) => [...prev, savedUser]);
+      setUserFormStatus("User baru berhasil disimpan.");
+      setUserForm(emptyUserForm());
+      setUserFormOpen(false);
+    } catch (error) {
+      setUserFormStatus(error.response?.data?.error || error.message || "User belum bisa disimpan saat ini.");
+    } finally {
+      setUserFormSaving(false);
     }
   };
 
@@ -406,7 +517,7 @@ export default function ManageUser() {
         return updateUser(teacher.id, { ...teacher, ...roleFields });
       }));
       alert("Pengaturan peran, kelas, dan mapel evaluator berhasil disimpan.");
-    } catch (error) {
+    } catch {
       alert("Gagal menyimpan akses guru ke backend. Pastikan sudah login.");
     }
   };
@@ -425,7 +536,7 @@ export default function ManageUser() {
 
       <main className="relative flex flex-1 flex-col overflow-hidden bg-stone-50">
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
-          <div className="mx-auto flex max-w-6xl flex-col gap-6">
+          <div className="mx-auto flex max-w-7xl flex-col gap-6">
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <div>
                 <span className="rounded bg-primary/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-stone-900">
@@ -468,12 +579,13 @@ export default function ManageUser() {
             </section>
 
                 <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-[0_10px_28px_rgba(15,23,42,0.05)]">
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <div className="md:col-span-2">
+                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px_auto] md:items-end">
+                    <div>
                       <label className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-stone-500">
                         Cari User
                       </label>
                       <input
+                        data-testid="admin-user-search"
                         type="text"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
@@ -497,6 +609,16 @@ export default function ManageUser() {
                         ))}
                       </select>
                     </div>
+                    <button
+                      data-testid="admin-add-user-button"
+                      type="button"
+                      onClick={openAddUserPanel}
+                      disabled={!canManageAccess}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-black text-stone-900 shadow-lg shadow-primary/20 transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">person_add</span>
+                      Tambah User
+                    </button>
                   </div>
                 </div>
 
@@ -595,26 +717,27 @@ export default function ManageUser() {
                   </div>
                 </section>
 
-                <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px]">
+                <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px] 2xl:grid-cols-[minmax(0,1fr)_460px]">
                   <section className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-[0_10px_28px_rgba(15,23,42,0.05)]">
                     <div className="border-b border-stone-200 bg-stone-50 px-6 py-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                         <div>
                           <h3 className="text-sm font-black uppercase tracking-[0.05em] text-stone-700">
-                            Kelola Role & Akses Evaluator
+                            Kelola Role & Akses User
                           </h3>
                           <p className="mt-1 text-xs font-semibold text-stone-500">
                             Role dapat dipilih lebih dari satu untuk setiap evaluator.
                           </p>
                         </div>
                         <span className="inline-flex w-fit rounded-full bg-primary/15 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-primary">
-                          {assignableTeachers.length} Evaluator
+                          {assignableTeachers.length} User
                         </span>
                       </div>
                     </div>
                     <div className="divide-y divide-stone-100">
                       {assignableTeachers.map((teacher) => {
                         const selectedRoles = deriveEvaluatorRoles(teacher);
+                        const visibleSelectedRoles = selectedRoles.filter((roleKey) => roleKey !== ROLE_CODES.EVALUATOR);
                         return (
                           <div key={teacher.id} className="p-6 transition-all hover:bg-stone-50/50">
                             <div className="grid gap-6 lg:grid-cols-12 lg:items-start">
@@ -629,29 +752,30 @@ export default function ManageUser() {
                                   </div>
                                 </div>
                                 <div className="mt-4 flex flex-wrap gap-2">
-                                  {selectedRoles.length > 0 ? selectedRoles.map((roleKey) => (
+                                  {visibleSelectedRoles.length > 0 ? visibleSelectedRoles.map((roleKey) => (
                                     <span key={roleKey} className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-black ${roleOptionByKey[roleKey].chip}`}>
                                       <span className="material-symbols-outlined text-[14px]">{roleOptionByKey[roleKey].icon}</span>
                                       {roleOptionByKey[roleKey].label}
                                     </span>
                                   )) : (
-                                    <span className="rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 text-[10px] font-black text-stone-500">Belum ada role evaluator</span>
+                                    <span className="rounded-full border border-stone-200 bg-stone-50 px-2.5 py-1 text-[10px] font-black text-stone-500">Role tambahan belum dipilih</span>
                                   )}
                                 </div>
                               </div>
 
                               <div className="grid gap-5 lg:col-span-8">
                                 <div>
-                                  <p className="mb-3 ml-1 text-[10px] font-black uppercase tracking-widest text-stone-400">Predikat / Role Evaluator</p>
+                                  <p className="mb-3 ml-1 text-[10px] font-black uppercase tracking-widest text-stone-400">Role Tambahan</p>
                                   <div className="flex flex-wrap gap-2">
-                                    {evaluatorRoleOptions.map((role) => {
+                                    {configurableEvaluatorRoleOptions.map((role) => {
                                       const isAssigned = selectedRoles.includes(role.key);
                                       return (
-                                        <button
-                                          key={role.key}
+                                          <button
+                                            data-testid={`admin-role-toggle-${teacher.id}-${role.key}`}
+                                            key={role.key}
                                           type="button"
                                           onClick={() => toggleEvaluatorRole(teacher.id, role.key)}
-                                          disabled={!canManageAccess || role.key === ROLE_CODES.EVALUATOR}
+                                          disabled={!canManageAccess}
                                           className={`group inline-flex rounded-xl border-2 text-[11px] font-black uppercase tracking-tight shadow-lg transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50 ${
                                             isAssigned
                                               ? `${role.active} min-w-[220px] flex-col items-start gap-1 px-5 py-3 text-left`
@@ -771,6 +895,7 @@ export default function ManageUser() {
                     </div>
                     <div className="border-t border-stone-200 bg-stone-50/50 px-6 py-5">
                       <button
+                        data-testid="admin-save-access-button"
                         type="button"
                         onClick={saveAccessState}
                         disabled={!canManageAccess}
@@ -895,6 +1020,188 @@ export default function ManageUser() {
               </div>
           </div>
         </div>
+        {userFormOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/45 p-4 backdrop-blur-sm">
+            <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-[1.75rem] border border-stone-200 bg-white shadow-[0_28px_90px_rgba(15,23,42,0.28)]">
+              <div className="border-b border-stone-200 bg-stone-50 px-6 py-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-primary-hover">Admin User</p>
+                    <h2 className="mt-1 text-2xl font-black text-stone-950">Tambah User Baru</h2>
+                    <p className="mt-2 text-sm font-semibold leading-6 text-stone-500">
+                      Akun baru tersimpan di backend dan aksesnya mengikuti role, kelas, dan mapel yang dipilih.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setUserFormOpen(false)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-500 transition hover:bg-stone-50"
+                    aria-label="Tutup tambah user"
+                  >
+                    <span className="material-symbols-outlined">close</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-auto p-6">
+                {userFormStatus && (
+                  <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+                    <span className="material-symbols-outlined mr-2 align-middle text-[18px]">info</span>
+                    {userFormStatus}
+                  </div>
+                )}
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-stone-500">Nama Akun</label>
+                    <input
+                      data-testid="admin-user-name"
+                      value={userForm.name}
+                      onChange={(event) => setUserForm((prev) => ({ ...prev, name: event.target.value }))}
+                      placeholder="Nama lengkap"
+                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-900 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-stone-500">Username</label>
+                    <input
+                      data-testid="admin-user-username"
+                      value={userForm.username}
+                      onChange={(event) => setUserForm((prev) => ({ ...prev, username: event.target.value }))}
+                      placeholder="username_login"
+                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-900 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-stone-500">Email</label>
+                    <input
+                      data-testid="admin-user-email"
+                      value={userForm.email}
+                      onChange={(event) => setUserForm((prev) => ({ ...prev, email: event.target.value }))}
+                      placeholder="nama@school.local"
+                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-900 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-stone-500">Password</label>
+                    <input
+                      data-testid="admin-user-password"
+                      type="password"
+                      value={userForm.password}
+                      onChange={(event) => setUserForm((prev) => ({ ...prev, password: event.target.value }))}
+                      placeholder="Minimal 8 karakter"
+                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-900 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-stone-500">NIP / Keterangan</label>
+                    <input
+                      value={userForm.nip}
+                      onChange={(event) => setUserForm((prev) => ({ ...prev, nip: event.target.value }))}
+                      placeholder="Opsional"
+                      className="w-full rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm font-semibold text-stone-900 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-6 grid gap-5 lg:grid-cols-2">
+                  <section className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-500">Role</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {configurableEvaluatorRoleOptions.map((role) => {
+                        const isAssigned = deriveEvaluatorRoles(userForm).includes(role.key);
+                        return (
+                          <button
+                            data-testid={`admin-role-select-${role.key}`}
+                            key={role.key}
+                            type="button"
+                            onClick={() => toggleUserFormRole(role.key)}
+                            className={`inline-flex items-center gap-1.5 rounded-xl border-2 px-4 py-2.5 text-[11px] font-black uppercase tracking-tight transition disabled:cursor-not-allowed disabled:opacity-70 ${
+                              isAssigned ? role.active : role.idle
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-[16px]">{isAssigned ? "check_circle" : role.icon}</span>
+                            {role.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  <section className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-500">Akses Kelas</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {classList.map((cls, index) => {
+                        const isAssigned = normalizeAccessList(userForm.classAccess).includes(cls);
+                        const color = classColorVariants[index % classColorVariants.length];
+                        return (
+                          <button
+                            key={cls}
+                            type="button"
+                            onClick={() => updateUserFormList("classAccess", cls)}
+                            className={`rounded-xl border-2 px-4 py-2.5 text-[11px] font-black uppercase tracking-tight transition ${
+                              isAssigned ? color.active : `bg-white ${color.text} ${color.border}`
+                            }`}
+                          >
+                            {cls}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  <section className="rounded-2xl border border-stone-200 bg-stone-50 p-4 lg:col-span-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-500">Akses Mapel</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {subjectList.map((subject, index) => {
+                        const isAssigned = normalizeAccessList(userForm.subjectAccess).includes(subject.code);
+                        const color = classColorVariants[(index + 3) % classColorVariants.length];
+                        return (
+                          <button
+                            key={subject.code}
+                            type="button"
+                            onClick={() => updateUserFormList("subjectAccess", subject.code)}
+                            className={`rounded-xl border-2 px-4 py-2.5 text-[11px] font-black uppercase tracking-tight transition ${
+                              isAssigned ? color.active : `bg-white ${color.text} ${color.border}`
+                            }`}
+                          >
+                            {subject.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 border-t border-stone-200 bg-stone-50 px-6 py-4 md:flex-row md:items-center md:justify-between">
+                <p className="text-xs font-semibold leading-5 text-stone-500">
+                  Hanya admin yang dapat membuat user dan mengatur akses akademik.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setUserFormOpen(false)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-bold text-stone-700 transition hover:bg-stone-50"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    data-testid="admin-save-user-button"
+                    type="button"
+                    onClick={handleCreateUser}
+                    disabled={userFormSaving}
+                    className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-stone-900 shadow-lg shadow-primary/20 transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">{userFormSaving ? "hourglass_top" : "save"}</span>
+                    Simpan User
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {studentReviewOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/40 p-4 backdrop-blur-sm">
             <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-primary/40 bg-white shadow-2xl">
@@ -957,9 +1264,12 @@ export default function ManageUser() {
                       <input
                         value={studentForm.nis}
                         onChange={(event) => setStudentForm((prev) => ({ ...prev, nis: event.target.value }))}
-                        placeholder="Contoh: NIS 202601001"
+                        placeholder={suggestedStudentNis || "Contoh: NIS 202601001"}
                         className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold text-stone-900 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
                       />
+                      <p className="mt-2 text-[10px] font-semibold leading-4 text-stone-500">
+                        Default mengikuti pola NIS kelas ini{suggestedStudentNis ? `: ${suggestedStudentNis}` : ""}.
+                      </p>
                     </div>
                     <div className="flex-[1.4]">
                       <label className="mb-2 block text-[10px] font-black uppercase tracking-widest text-stone-500">Nama Siswa</label>

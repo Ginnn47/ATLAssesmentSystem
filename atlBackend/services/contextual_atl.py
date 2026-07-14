@@ -685,7 +685,8 @@ def reset_pairwise_scale_options(context):
 
 
 def get_context(identifier):
-    ensure_contextual_seed()
+    if not transaction.get_connection().in_atomic_block:
+        ensure_contextual_seed()
     queryset = LearningContext.objects.all()
     if str(identifier).isdigit():
         return queryset.get(id=int(identifier))
@@ -931,7 +932,8 @@ def context_flow_to_dict(context):
 
 
 def hierarchy_to_dict():
-    ensure_contextual_seed()
+    if not ATLCategory.objects.exists():
+        ensure_contextual_seed()
     canonical = canonical_subskill_names()
     return {
         "categories": [
@@ -1040,14 +1042,12 @@ def merged_assessments_for_context(context=None, topic=None, student_id=None):
 
 
 def sync_assessment_payload(student_id, topic_identifier, context_identifier, ratings, evaluator="", teacher_note=""):
-    with transaction.atomic():
-        topic = Topic.objects.get(code=topic_identifier, is_active=True)
+    topic = Topic.objects.get(code=topic_identifier, is_active=True)
+    try:
+        context = get_context(context_identifier or topic_identifier)
+    except LearningContext.DoesNotExist:
         context = None
-        try:
-            context = get_context(context_identifier or topic_identifier)
-        except (LearningContext.DoesNotExist, OperationalError):
-            context = None
-
+    with transaction.atomic():
         record, _ = Assessment.objects.update_or_create(
             student_id=str(student_id),
             topic=topic,
@@ -1067,14 +1067,12 @@ def sync_assessment_payload(student_id, topic_identifier, context_identifier, ra
 
 
 def clear_assessment_payload(student_id, topic_identifier, context_identifier=None):
-    with transaction.atomic():
-        topic = Topic.objects.get(code=topic_identifier, is_active=True)
+    topic = Topic.objects.get(code=topic_identifier, is_active=True)
+    try:
+        context = get_context(context_identifier or topic_identifier)
+    except LearningContext.DoesNotExist:
         context = None
-        try:
-            context = get_context(context_identifier or topic_identifier)
-        except (LearningContext.DoesNotExist, OperationalError):
-            context = None
-
+    with transaction.atomic():
         Assessment.objects.filter(student_id=str(student_id), topic=topic).delete()
         if context is not None:
             StudentAssessment.objects.filter(student_id=str(student_id), context=context).delete()

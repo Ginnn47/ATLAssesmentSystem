@@ -1,11 +1,13 @@
 import logging
 import json
 import re
+import time
 from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, update_last_login
+from django.contrib.auth.signals import user_logged_in
 from django.db import IntegrityError
 from django.db import OperationalError, transaction
 from django.http import HttpResponse, JsonResponse
@@ -158,38 +160,63 @@ def ensure_seed_user_for_login(identifier):
         return None
 
     first_name, last_name = split_display_name(seed.get("name"))
-    user, _created = User.objects.update_or_create(
+    user_defaults = {
+        "email": seed.get("email", ""),
+        "first_name": first_name,
+        "last_name": last_name,
+        "is_staff": seed.get("isStaff", False),
+        "is_superuser": seed.get("isSuperuser", False),
+        "is_active": seed.get("status", "Aktif") == "Aktif",
+    }
+    user, _created = User.objects.get_or_create(
         username=seed["username"],
-        defaults={
-            "email": seed.get("email", ""),
-            "first_name": first_name,
-            "last_name": last_name,
-            "is_staff": seed.get("isStaff", False),
-            "is_superuser": seed.get("isSuperuser", False),
-            "is_active": seed.get("status", "Aktif") == "Aktif",
-        },
+        defaults=user_defaults,
     )
+    changed_user_fields = []
+    for field_name, expected_value in user_defaults.items():
+        if getattr(user, field_name) != expected_value:
+            setattr(user, field_name, expected_value)
+            changed_user_fields.append(field_name)
+    if changed_user_fields:
+        user.save(update_fields=changed_user_fields)
+
     seed_password = seed.get("password")
     if seed_password and not user.check_password(seed_password):
         user.set_password(seed_password)
         user.save(update_fields=["password"])
 
-    profile, _ = UserProfile.objects.update_or_create(
+    profile_defaults = {
+        "nip": seed.get("nip", ""),
+        "role_label": seed.get("roleLabel", "Evaluator"),
+        "role_group": seed.get("roleGroup", "Guru / Evaluator"),
+        "status": seed.get("status", "Aktif"),
+        "last_login_label": seed.get("lastLogin", "-"),
+    }
+    profile, profile_created = UserProfile.objects.get_or_create(
         user=user,
-        defaults={
-            "nip": seed.get("nip", ""),
-            "role_label": seed.get("roleLabel", "Evaluator"),
-            "role_group": seed.get("roleGroup", "Guru / Evaluator"),
-            "status": seed.get("status", "Aktif"),
-            "last_login_label": seed.get("lastLogin", "-"),
-        },
+        defaults=profile_defaults,
     )
+    changed_profile_fields = []
+    for field_name, expected_value in profile_defaults.items():
+        if field_name == "last_login_label" and not profile_created:
+            continue
+        if getattr(profile, field_name) != expected_value:
+            setattr(profile, field_name, expected_value)
+            changed_profile_fields.append(field_name)
+    if changed_profile_fields:
+        profile.save(update_fields=changed_profile_fields)
+
     class_codes = seed.get("classAccess", [])
-    if class_codes:
-        profile.class_access.set(SchoolClass.objects.filter(code__in=class_codes))
+    desired_class_ids = set(SchoolClass.objects.filter(code__in=class_codes).values_list("id", flat=True))
+    current_class_ids = set(profile.class_access.values_list("id", flat=True))
+    if current_class_ids != desired_class_ids:
+        profile.class_access.set(SchoolClass.objects.filter(id__in=desired_class_ids))
+
     subject_codes = seed.get("subjectAccess", [])
-    if subject_codes:
-        profile.subject_access.set(Subject.objects.filter(code__in=subject_codes))
+    desired_subject_ids = set(Subject.objects.filter(code__in=subject_codes).values_list("id", flat=True))
+    current_subject_ids = set(profile.subject_access.values_list("id", flat=True))
+    if current_subject_ids != desired_subject_ids:
+        profile.subject_access.set(Subject.objects.filter(id__in=desired_subject_ids))
     return user
 
 
@@ -341,6 +368,22 @@ def user_class_codes(user):
     return {item.code for item in profile.class_access.all()}
 
 
+def school_classes_for_user(user):
+    queryset = SchoolClass.objects.filter(is_active=True).order_by("code")
+    if is_admin_user(user):
+        return queryset
+    if ROLE_HOMEROOM in role_codes_for_user(user):
+        codes = user_class_codes(user)
+        return queryset.filter(code__in=codes) if codes else queryset.none()
+    return queryset
+
+
+def class_queryset_from_access_payload(values):
+    raw_values = [str(item or "").strip() for item in (values or []) if str(item or "").strip()]
+    codes = [normalize_class_code(item) for item in raw_values]
+    return SchoolClass.objects.filter(code__in=codes, is_active=True)
+
+
 def require_subject_access(request, subject, allowed_roles):
     guard = require_any_role(request, allowed_roles)
     if guard:
@@ -381,6 +424,26 @@ def update_profile_login_label(user):
         return
     profile.last_login_label = timezone.localtime(timezone.now()).strftime("%d %b %Y, %H:%M")
     profile.save(update_fields=["last_login_label"])
+
+
+def retry_when_sqlite_locked(operation, attempts=5, base_delay=0.12):
+    for attempt in range(attempts):
+        try:
+            return operation()
+        except OperationalError as exc:
+            message = str(exc).lower()
+            if not any(token in message for token in ("database is locked", "database is busy", "locked")) or attempt == attempts - 1:
+                raise
+            time.sleep(base_delay * (attempt + 1))
+    return None
+
+
+def session_login_without_user_last_login(request, user):
+    user_logged_in.disconnect(update_last_login, dispatch_uid="update_last_login")
+    try:
+        return login(request, user)
+    finally:
+        user_logged_in.connect(update_last_login, dispatch_uid="update_last_login")
 
 
 def parse_body(request):
@@ -560,8 +623,10 @@ def auth_login_api(request):
     payload = parse_body(request)
     username = (payload.get("username") or payload.get("email") or "").strip()
     password = payload.get("password") or ""
-    ensure_seed_user_for_login(username)
     user = authenticate(request, username=username, password=password)
+    if user is None:
+        retry_when_sqlite_locked(lambda: ensure_seed_user_for_login(username), attempts=8, base_delay=0.2)
+        user = authenticate(request, username=username, password=password)
     if user is None:
         match = User.objects.filter(username__iexact=username).first()
         if not match and "@" in username:
@@ -575,8 +640,11 @@ def auth_login_api(request):
         return api_response({"error": "Invalid username or password"}, status=400)
     if not is_atl_user_active(user):
         return api_response({"error": "ATL account is inactive or missing a profile"}, status=403)
-    login(request, user)
-    update_profile_login_label(user)
+    retry_when_sqlite_locked(lambda: session_login_without_user_last_login(request, user), attempts=8, base_delay=0.2)
+    try:
+        retry_when_sqlite_locked(lambda: update_profile_login_label(user), attempts=3, base_delay=0.1)
+    except OperationalError:
+        logger.warning("Skipping last-login label update because the database is busy.", exc_info=True)
     return api_response({"user": user_to_dict(user)})
 
 
@@ -653,7 +721,7 @@ def classes_api(request):
             )
             return api_response({"class": class_to_dict(item)}, status=201)
 
-        return api_response({"classes": [class_to_dict(item) for item in SchoolClass.objects.filter(is_active=True)]})
+        return api_response({"classes": [class_to_dict(item) for item in school_classes_for_user(request.user)]})
     except OperationalError:
         return api_response({"error": "Classes unavailable from database."}, status=503)
 
@@ -758,31 +826,52 @@ def users_api(request):
     username = (payload.get("username") or payload.get("email") or payload.get("nip") or "").strip()
     if not username:
         return api_response({"error": "Username is required"}, status=400)
+    email = (payload.get("email") or "").strip()
+    if not email or "@" not in email:
+        return api_response({"error": "Email is required"}, status=400)
+    password = payload.get("password") or ""
+    if len(str(password)) < 8:
+        return api_response({"error": "Password must contain at least 8 characters"}, status=400)
+    raw_roles = payload.get("roles") or payload.get("roleCodes") or payload.get("role_codes") or []
+    if isinstance(raw_roles, str):
+        raw_roles = [raw_roles]
+    if not [role for role in raw_roles if role in ROLE_ORDER]:
+        return api_response({"error": "Role is required"}, status=400)
+    if User.objects.filter(email__iexact=email).exists():
+        return api_response({"error": "Email already exists"}, status=400)
     name = (payload.get("name") or "").strip()
     first_name, _, last_name = name.partition(" ")
     try:
-        user = User.objects.create_user(
-            username=username,
-            password=payload.get("password") or "atl12345",
-            email=payload.get("email") or "",
-            first_name=first_name,
-            last_name=last_name,
-            is_staff=payload.get("isStaff", False),
+        user = retry_when_sqlite_locked(
+            lambda: User.objects.create_user(
+                username=username,
+                password=password,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                is_staff=payload.get("isStaff", False),
+            ),
+            attempts=8,
+            base_delay=0.2,
         )
     except IntegrityError:
         return api_response({"error": "Username already exists"}, status=400)
     role_codes = normalize_role_codes_from_payload(payload, user=user)
     role_label, role_group = profile_fields_for_roles(role_codes)
-    profile = UserProfile.objects.create(
-        user=user,
-        nip=payload.get("nip") or "",
-        role_label=role_label,
-        role_group=role_group,
-        status=payload.get("status") or "Aktif",
-        last_login_label="-",
+    profile = retry_when_sqlite_locked(
+        lambda: UserProfile.objects.create(
+            user=user,
+            nip=payload.get("nip") or "",
+            role_label=role_label,
+            role_group=role_group,
+            status=payload.get("status") or "Aktif",
+            last_login_label="-",
+        ),
+        attempts=8,
+        base_delay=0.2,
     )
-    profile.class_access.set(SchoolClass.objects.filter(code__in=payload.get("classAccess") or []))
-    profile.subject_access.set(Subject.objects.filter(code__in=payload.get("subjectAccess") or []))
+    retry_when_sqlite_locked(lambda: profile.class_access.set(class_queryset_from_access_payload(payload.get("classAccess") or [])), attempts=8, base_delay=0.2)
+    retry_when_sqlite_locked(lambda: profile.subject_access.set(Subject.objects.filter(code__in=payload.get("subjectAccess") or [])), attempts=8, base_delay=0.2)
     return api_response({"user": user_to_dict(user)}, status=201)
 
 
@@ -839,11 +928,11 @@ def user_detail_api(request, user_id):
         role_codes = normalize_role_codes_from_payload(payload, user=user)
         profile.role_label, profile.role_group = profile_fields_for_roles(role_codes)
     profile.status = payload.get("status") or profile.status
-    profile.save()
+    retry_when_sqlite_locked(lambda: profile.save(), attempts=8, base_delay=0.2)
     if "classAccess" in payload:
-        profile.class_access.set(SchoolClass.objects.filter(code__in=payload.get("classAccess") or []))
+        retry_when_sqlite_locked(lambda: profile.class_access.set(class_queryset_from_access_payload(payload.get("classAccess") or [])), attempts=8, base_delay=0.2)
     if "subjectAccess" in payload:
-        profile.subject_access.set(Subject.objects.filter(code__in=payload.get("subjectAccess") or []))
+        retry_when_sqlite_locked(lambda: profile.subject_access.set(Subject.objects.filter(code__in=payload.get("subjectAccess") or [])), attempts=8, base_delay=0.2)
     return api_response({"user": user_to_dict(user)})
 
 
@@ -903,6 +992,13 @@ def get_topic(topic_id):
 
 
 def assessment_topic_error(topic_identifier, context_identifier=None):
+    topic = Topic.objects.filter(code=topic_identifier, is_active=True).first()
+    context_code = context_identifier or topic_identifier
+    context_queryset = LearningContext.objects.filter(id=int(context_code)) if str(context_code).isdigit() else LearningContext.objects.filter(legacy_topic_code=context_code)
+    context = context_queryset.first()
+    if topic and context and context.rubric_items.exists():
+        return None
+
     ensure_catalog()
     repair = ensure_assessable_topic(topic_identifier)
     topic = repair.get("topic")
@@ -1111,7 +1207,7 @@ def atl_hierarchy_api(request):
         return guard
 
     try:
-        return api_response(hierarchy_to_dict())
+        return api_response(retry_when_sqlite_locked(lambda: hierarchy_to_dict(), attempts=8, base_delay=0.2))
     except OperationalError:
         return api_response({"categories": []})
 
@@ -1209,7 +1305,7 @@ def context_subskills_api(request, context_id):
         repair = ensure_assessable_topic(context_id) if not str(context_id).isdigit() else {}
         context = repair.get("context") or get_context(context_id)
         if request.method == "POST":
-            subject_guard = require_context_subject_access(request, context, [ROLE_ATL_EXPERT])
+            subject_guard = require_context_subject_access(request, context, [ROLE_ATL_EXPERT, ROLE_SUBJECT_COORDINATOR])
             if subject_guard:
                 return subject_guard
         if request.method == "GET":
@@ -1495,9 +1591,9 @@ def topic_criteria_api(request, topic_id):
         return guard
 
     try:
-        topic = get_topic(topic_id)
+        topic = retry_when_sqlite_locked(lambda: get_topic(topic_id), attempts=8, base_delay=0.2)
         if request.method == "POST":
-            subject_guard = require_subject_access(request, topic.subject, [ROLE_ATL_EXPERT])
+            subject_guard = require_subject_access(request, topic.subject, [ROLE_ATL_EXPERT, ROLE_SUBJECT_COORDINATOR])
             if subject_guard:
                 return subject_guard
         if request.method == "GET":
@@ -1513,40 +1609,57 @@ def topic_criteria_api(request, topic_id):
             return api_response({"criteria": criteria, "topic": topic_to_dict(topic)})
 
         payload = parse_body(request)
-        with transaction.atomic():
-            order = topic.criteria.count()
+        criterion_name = (payload.get("kriteria") or payload.get("name") or "").strip()
+        levels = payload.get("levels") or {}
+        if (
+            not criterion_name
+            or not (payload.get("criteriaTopic") or payload.get("criteria_topic") or "").strip()
+            or not isinstance(levels, dict)
+            or not all(str(value or "").strip() for value in levels.values())
+        ):
+            return api_response({"error": "Semua field kriteria dan indikator level wajib diisi."}, status=400)
+        def create_topic_criterion():
+            context = LearningContext.objects.filter(legacy_topic_code=topic_id).first()
+            if context is None:
+                repair = ensure_assessable_topic(topic_id)
+                context = repair.get("context")
             subskills = find_subskills_for_payload(payload)
-            normalized_atl = [subskill.name for subskill in subskills] or payload.get("atl") or []
-            criterion = Criterion.objects.create(
-                topic=topic,
-                name=(payload.get("kriteria") or payload.get("name") or "").strip(),
-                atl=normalized_atl,
-                levels=payload.get("levels") or {},
-                order=order,
-            )
-            context = ensure_assessable_topic(topic_id).get("context")
             subskill = subskills[0] if subskills else find_subskill_for_payload(context, payload)
             if not context or not subskill:
-                raise IntegrityError("Context rubric item could not be created.")
-            rubric_item, _ = ContextRubricItem.objects.update_or_create(
-                context=context,
-                title=criterion.name,
-                defaults={
-                    "subskill": subskill,
-                    "criteria_topic": payload.get("criteriaTopic") or payload.get("criteria_topic") or "",
-                    "level_descriptors": criterion.levels or DEFAULT_LEVELS,
-                    "order": context.rubric_items.count(),
-                },
-            )
-            selected_item_subskills = sync_rubric_item_subskills(rubric_item, subskills or [subskill])
-            for index, linked_subskill in enumerate(selected_item_subskills):
-                ContextATLMapping.objects.update_or_create(
-                    context=context,
-                    subskill=linked_subskill,
-                    defaults={"order": context.mappings.count() + index, "is_active": True},
+                return {"error": "Subskill/kategori ATL wajib dipilih untuk kriteria ini.", "_status": 400}
+            normalized_atl = [item.name for item in subskills] or payload.get("atl") or []
+            with transaction.atomic():
+                order = topic.criteria.count()
+                criterion = Criterion.objects.create(
+                    topic=topic,
+                    name=criterion_name,
+                    atl=normalized_atl,
+                    levels=levels,
+                    order=order,
                 )
-            invalidate_weights_for_topic(topic)
-        return api_response({"criterion": criterion_to_dict(criterion), "topic": topic_to_dict(topic)}, status=201)
+                rubric_item, _ = ContextRubricItem.objects.update_or_create(
+                    context=context,
+                    title=criterion.name,
+                    defaults={
+                        "subskill": subskill,
+                        "criteria_topic": payload.get("criteriaTopic") or payload.get("criteria_topic") or "",
+                        "level_descriptors": criterion.levels or DEFAULT_LEVELS,
+                        "order": context.rubric_items.count(),
+                    },
+                )
+                selected_item_subskills = sync_rubric_item_subskills(rubric_item, subskills or [subskill])
+                for index, linked_subskill in enumerate(selected_item_subskills):
+                    ContextATLMapping.objects.update_or_create(
+                        context=context,
+                        subskill=linked_subskill,
+                        defaults={"order": context.mappings.count() + index, "is_active": True},
+                    )
+                invalidate_weights_for_topic(topic)
+            return {"criterion": criterion_to_dict(criterion), "topic": topic_to_dict(topic), "_status": 201}
+
+        result = retry_when_sqlite_locked(create_topic_criterion, attempts=8, base_delay=0.2)
+        status = result.pop("_status", 201)
+        return api_response(result, status=status)
     except IntegrityError:
         return api_response({"error": "Gagal membuat context rubric untuk kriteria ini."}, status=400)
     except (OperationalError, Topic.DoesNotExist):
@@ -1564,7 +1677,7 @@ def criterion_detail_api(request, criterion_id):
 
     try:
         criterion = Criterion.objects.get(id=criterion_id)
-        subject_guard = require_subject_access(request, criterion.topic.subject, [ROLE_ATL_EXPERT])
+        subject_guard = require_subject_access(request, criterion.topic.subject, [ROLE_ATL_EXPERT, ROLE_SUBJECT_COORDINATOR])
         if subject_guard:
             return subject_guard
         if request.method == "DELETE":
@@ -1603,7 +1716,7 @@ def criterion_detail_api(request, criterion_id):
     except Criterion.DoesNotExist:
         try:
             rubric_item = ContextRubricItem.objects.select_related("context", "subskill", "subskill__category").get(id=criterion_id)
-            subject_guard = require_context_subject_access(request, rubric_item.context, [ROLE_ATL_EXPERT])
+            subject_guard = require_context_subject_access(request, rubric_item.context, [ROLE_ATL_EXPERT, ROLE_SUBJECT_COORDINATOR])
             if subject_guard:
                 return subject_guard
             old_name = rubric_item.title
@@ -1851,7 +1964,11 @@ def assessments_api(request):
                         },
                         status=400,
                     )
-                topic_guard = assessment_topic_error(topic_identifier, context_identifier)
+                topic_guard = retry_when_sqlite_locked(
+                    lambda: assessment_topic_error(topic_identifier, context_identifier),
+                    attempts=8,
+                    base_delay=0.2,
+                )
                 if topic_guard:
                     return topic_guard
                 normalized_items.append(
@@ -1865,38 +1982,39 @@ def assessments_api(request):
                     )
                 )
 
-            saved_items = []
-            merged_assessments = {}
-            with transaction.atomic():
-                for student_id, topic_identifier, context_identifier, ratings, teacher_note, clear_requested in normalized_items:
-                    if clear_requested:
-                        assessments = clear_assessment_payload(
-                            student_id=student_id,
-                            topic_identifier=topic_identifier,
-                            context_identifier=context_identifier,
-                        )
-                        saved_items.append({"studentId": student_id, "topic": topic_identifier, "ratings": {}, "status": "cleared"})
-                    else:
-                        record, assessments = sync_assessment_payload(
-                            student_id=student_id,
-                            topic_identifier=topic_identifier,
-                            context_identifier=context_identifier,
-                            ratings=ratings,
-                            evaluator=evaluator,
-                            teacher_note=teacher_note,
-                        )
-                        saved_items.append({"studentId": record.student_id, "topic": record.topic.code, "ratings": record.ratings, "status": "saved"})
-                    for student_key, topic_map in assessments.items():
-                        merged_assessments.setdefault(str(student_key), {}).update(topic_map or {})
-            return api_response(
-                {
+            def save_batch_payload():
+                saved_items = []
+                merged_assessments = {}
+                with transaction.atomic():
+                    for student_id, topic_identifier, context_identifier, ratings, teacher_note, clear_requested in normalized_items:
+                        if clear_requested:
+                            assessments = clear_assessment_payload(
+                                student_id=student_id,
+                                topic_identifier=topic_identifier,
+                                context_identifier=context_identifier,
+                            )
+                            saved_items.append({"studentId": student_id, "topic": topic_identifier, "ratings": {}, "status": "cleared"})
+                        else:
+                            record, assessments = sync_assessment_payload(
+                                student_id=student_id,
+                                topic_identifier=topic_identifier,
+                                context_identifier=context_identifier,
+                                ratings=ratings,
+                                evaluator=evaluator,
+                                teacher_note=teacher_note,
+                            )
+                            saved_items.append({"studentId": record.student_id, "topic": record.topic.code, "ratings": record.ratings, "status": "saved"})
+                        for student_key, topic_map in assessments.items():
+                            merged_assessments.setdefault(str(student_key), {}).update(topic_map or {})
+                return {
                     "items": saved_items,
                     "savedCount": len([item for item in saved_items if item["status"] == "saved"]),
                     "clearedCount": len([item for item in saved_items if item["status"] == "cleared"]),
                     "assessments": merged_assessments,
                     "evaluator": evaluator,
                 }
-            )
+
+            return api_response(retry_when_sqlite_locked(save_batch_payload, attempts=8, base_delay=0.2))
 
         topic_identifier = payload.get("topic") or payload.get("topicId")
         context_identifier = payload.get("context") or payload.get("contextId") or topic_identifier
@@ -1909,17 +2027,21 @@ def assessments_api(request):
             return api_response({"error": "Assessment ratings must be an object."}, status=400)
         if not ratings and not clear_requested:
             return api_response({"error": "Tidak ada nilai untuk disimpan. Kirim clear=true jika ingin menghapus nilai."}, status=400)
-        topic_guard = assessment_topic_error(topic_identifier, context_identifier)
+        topic_guard = retry_when_sqlite_locked(
+            lambda: assessment_topic_error(topic_identifier, context_identifier),
+            attempts=8,
+            base_delay=0.2,
+        )
         if topic_guard:
             return topic_guard
-        if clear_requested:
-            assessments = clear_assessment_payload(
-                student_id=str(student_value),
-                topic_identifier=topic_identifier,
-                context_identifier=context_identifier,
-            )
-            return api_response(
-                {
+        def save_single_payload():
+            if clear_requested:
+                assessments = clear_assessment_payload(
+                    student_id=str(student_value),
+                    topic_identifier=topic_identifier,
+                    context_identifier=context_identifier,
+                )
+                return {
                     "studentId": str(student_value),
                     "topic": topic_identifier,
                     "ratings": {},
@@ -1927,16 +2049,17 @@ def assessments_api(request):
                     "assessments": assessments,
                     "evaluator": evaluator,
                 }
+            record, assessments = sync_assessment_payload(
+                student_id=str(student_value),
+                topic_identifier=topic_identifier,
+                context_identifier=context_identifier,
+                ratings=ratings,
+                evaluator=evaluator,
+                teacher_note=payload.get("teacherNote") or payload.get("teacher_note") or "",
             )
-        record, assessments = sync_assessment_payload(
-            student_id=str(student_value),
-            topic_identifier=topic_identifier,
-            context_identifier=context_identifier,
-            ratings=ratings,
-            evaluator=evaluator,
-            teacher_note=payload.get("teacherNote") or payload.get("teacher_note") or "",
-        )
-        return api_response({"studentId": record.student_id, "topic": record.topic.code, "ratings": record.ratings, "status": "saved", "assessments": assessments, "evaluator": evaluator})
+            return {"studentId": record.student_id, "topic": record.topic.code, "ratings": record.ratings, "status": "saved", "assessments": assessments, "evaluator": evaluator}
+
+        return api_response(retry_when_sqlite_locked(save_single_payload, attempts=8, base_delay=0.2))
     except Topic.DoesNotExist:
         return api_response(
             {"assessments": {}} if request.method == "GET" else {"error": "Topik ini belum tersedia untuk penilaian. Pilih topik aktif dari daftar pembelajaran."},
@@ -1951,6 +2074,10 @@ def assessments_api(request):
 def assessments_preview_api(request):
     if request.method == "OPTIONS":
         return api_response({})
+
+    guard = require_any_role(request, [ROLE_EVALUATOR])
+    if guard:
+        return guard
 
     payload = parse_body(request)
     raw_items = payload.get("items")
@@ -1996,6 +2123,9 @@ def assessments_preview_api(request):
 def dashboard_api(request):
     if request.method == "OPTIONS":
         return api_response({})
+    guard = require_active_user(request)
+    if guard:
+        return guard
 
     try:
         ensure_catalog()
@@ -2055,6 +2185,10 @@ def reports_api(request):
     if request.method == "OPTIONS":
         return api_response({})
 
+    guard = require_any_role(request, [ROLE_EVALUATOR])
+    if guard:
+        return guard
+
     class_name = request.GET.get("class") or "3A - Primary"
     topic_id = request.GET.get("topic") or "singing_christmas_carol"
     context_id = request.GET.get("context") or topic_id
@@ -2089,6 +2223,10 @@ def reports_export_api(request):
     if request.method == "OPTIONS":
         response = HttpResponse(status=204)
     else:
+        guard = require_any_role(request, [ROLE_EVALUATOR])
+        if guard:
+            return guard
+
         payload = parse_body(request)
         meta = payload.get("meta") or {}
         topic_id = meta.get("topicId") or meta.get("topic") or payload.get("topicId") or payload.get("topic")

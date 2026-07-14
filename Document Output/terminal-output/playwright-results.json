@@ -1,0 +1,550 @@
+{
+  "config": {
+    "argv": [
+      "C:\\Program Files\\nodejs\\node.exe",
+      "D:\\Kuliah\\Task\\SMT (6) dan (7)\\Metupen\\NewLife\\Fuzzylipe\\Doc Deliverables\\Code\\ATLweb\\atl\\atl-framework\\node_modules\\@playwright\\test\\cli.js",
+      "test",
+      "--reporter=list,json"
+    ],
+    "configFile": "D:\\Kuliah\\Task\\SMT (6) dan (7)\\Metupen\\NewLife\\Fuzzylipe\\Doc Deliverables\\Code\\ATLweb\\atl\\atl-framework\\playwright.config.js",
+    "rootDir": "D:/Kuliah/Task/SMT (6) dan (7)/Metupen/NewLife/Fuzzylipe/Doc Deliverables/Code/ATLweb/atl/atl-framework/tests",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": "D:\\Kuliah\\Task\\SMT (6) dan (7)\\Metupen\\NewLife\\Fuzzylipe\\Doc Deliverables\\Code\\ATLweb\\atl\\atl-framework\\tests\\helpers\\global-setup.js",
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "D:/Kuliah/Task/SMT (6) dan (7)/Metupen/NewLife/Fuzzylipe/Doc Deliverables/Code/ATLweb/atl/atl-framework/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "D:/Kuliah/Task/SMT (6) dan (7)/Metupen/NewLife/Fuzzylipe/Doc Deliverables/Code/ATLweb/atl/atl-framework/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "admin-role.spec.js",
+      "file": "admin-role.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Blackbox - Admin Akademik - Role dan Akses",
+          "file": "admin-role.spec.js",
+          "line": 10,
+          "column": 6,
+          "specs": [
+            {
+              "title": "BBAD-01 - Berhasil sesuai harapan - Admin membuat akun baru, memilih role, dan user login sesuai role tersebut",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 22027,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:39:26.213Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ec39b03a45137a70daa2-6a6c08aebe73193e0cb3",
+              "file": "admin-role.spec.js",
+              "line": 11,
+              "column": 3
+            },
+            {
+              "title": "BBAD-02 - Tidak berhasil - Admin membuat user dengan email kosong, email duplikat, password tidak valid, atau role belum dipilih",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 8489,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:39:49.164Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ec39b03a45137a70daa2-e165a308912770ef2cac",
+              "file": "admin-role.spec.js",
+              "line": 36,
+              "column": 3
+            },
+            {
+              "title": "BBAD-03 - Berhasil tetapi hasil tidak diharapkan - Admin memberi role Guru, tetapi user bisa mengakses fitur Admin/ATL Expert; atau akun nonaktif masih bisa login",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 35766,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:39:57.706Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ec39b03a45137a70daa2-ff6a848d90a1d01b106b",
+              "file": "admin-role.spec.js",
+              "line": 52,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "atl-expert-fuzzy.spec.js",
+      "file": "atl-expert-fuzzy.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Blackbox - ATL Expert - Pembobotan Fuzzy-AHP",
+          "file": "atl-expert-fuzzy.spec.js",
+          "line": 50,
+          "column": 6,
+          "specs": [
+            {
+              "title": "BBAE-01 - Berhasil sesuai harapan - ATL Expert mengisi TFN valid, pairwise comparison lengkap, memproses Fuzzy-AHP, lalu menyimpan bobot final",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 19540,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:40:33.576Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ba635b8cdde408568833-dca03b920f5270988e5e",
+              "file": "atl-expert-fuzzy.spec.js",
+              "line": 51,
+              "column": 3
+            },
+            {
+              "title": "BBAE-02 - Tidak berhasil - ATL Expert mengisi TFN tidak valid atau pairwise belum lengkap",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 9835,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:40:53.159Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ba635b8cdde408568833-bf04ca769bc7f5a45f21",
+              "file": "atl-expert-fuzzy.spec.js",
+              "line": 95,
+              "column": 3
+            },
+            {
+              "title": "BBAE-03 - Berhasil tetapi hasil tidak diharapkan - Sistem berhasil menyimpan bobot meskipun hasil tidak ternormalisasi, kosong, negatif, atau tidak valid",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 15060,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:41:03.038Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ba635b8cdde408568833-2d82b269c3e4bc6b7523",
+              "file": "atl-expert-fuzzy.spec.js",
+              "line": 110,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "guru-assessment.spec.js",
+      "file": "guru-assessment.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Blackbox - Guru/Evaluator - Input Assessment ATL",
+          "file": "guru-assessment.spec.js",
+          "line": 66,
+          "column": 6,
+          "specs": [
+            {
+              "title": "BBGR-01 - Berhasil sesuai harapan - Guru login, memilih kelas, memilih siswa, mengisi seluruh rubrik ATL, lalu menyimpan assessment",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 31801,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:41:18.165Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "2875eaa4f65856c6d4c2-9ebef45dea2e1427c2f7",
+              "file": "guru-assessment.spec.js",
+              "line": 67,
+              "column": 3
+            },
+            {
+              "title": "BBGR-02 - Tidak berhasil - Guru mencoba menyimpan assessment tanpa memilih siswa atau dengan indikator yang belum diisi",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 12404,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:41:50.009Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "2875eaa4f65856c6d4c2-a4c7d3b76f73d96d9b0f",
+              "file": "guru-assessment.spec.js",
+              "line": 83,
+              "column": 3
+            },
+            {
+              "title": "BBGR-03 - Berhasil tetapi hasil tidak diharapkan - Guru mengisi assessment untuk Student A, sistem menyimpan, tetapi hasil muncul pada Student B atau skor tidak sesuai input",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 33979,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:42:02.462Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "2875eaa4f65856c6d4c2-2f904a33048d7097a599",
+              "file": "guru-assessment.spec.js",
+              "line": 98,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "pj-mapel-criteria.spec.js",
+      "file": "pj-mapel-criteria.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Blackbox - PJ Matkul/PJ Mapel - Manajemen Kriteria",
+          "file": "pj-mapel-criteria.spec.js",
+          "line": 59,
+          "column": 6,
+          "specs": [
+            {
+              "title": "BBPJ-01 - Berhasil sesuai harapan - PJ Matkul menambahkan kriteria, subskill, dan indikator ATL yang valid",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 44198,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:42:36.514Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d5e44ab35690eb6bc3cb-9a9ff5f9512fca662987",
+              "file": "pj-mapel-criteria.spec.js",
+              "line": 60,
+              "column": 3
+            },
+            {
+              "title": "BBPJ-02 - Tidak berhasil - PJ Matkul menyimpan kriteria kosong, indikator kosong, atau kode kriteria duplikat",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 16703,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:43:20.778Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d5e44ab35690eb6bc3cb-3ad0759a3238f354e5ae",
+              "file": "pj-mapel-criteria.spec.js",
+              "line": 75,
+              "column": 3
+            },
+            {
+              "title": "BBPJ-03 - Berhasil tetapi hasil tidak diharapkan - PJ Matkul mengubah kriteria pada satu konteks, tetapi perubahan memengaruhi konteks lain atau merusak data assessment lama",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 50852,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-07-03T09:43:37.516Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "d5e44ab35690eb6bc3cb-666656d3932a6e2a4c97",
+              "file": "pj-mapel-criteria.spec.js",
+              "line": 94,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-07-03T09:38:56.707Z",
+    "duration": 371151.641,
+    "expected": 12,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

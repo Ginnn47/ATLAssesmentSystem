@@ -7,6 +7,13 @@ export default defineConfig({
   server: {
     allowedHosts: [
       'delirious-capped-cinnamon.ngrok-free.dev' // Izinkan domain ngrok frontend Anda di sini [1]
-    ]
+    ],
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   }
 })

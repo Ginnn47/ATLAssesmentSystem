@@ -80,10 +80,11 @@ export const getGrantedFeatures = (user = null) => {
 
 export const canAccessRoute = (user = null, allowedRoles = []) => {
   if (!user) return false;
-  return true;
+  if (!allowedRoles.length) return true;
+  return allowedRoles.some((roleCode) => hasRole(user, roleCode));
 };
 
-export const getSidebarMenuGroups = (user = null) => {
+export const getSidebarMenuGroups = () => {
   const main = [
     { icon: "space_dashboard", label: "Dashboard", key: "dashboard", to: "/dashboard" },
     { icon: "groups", label: "Student Management", key: "students", to: "/students" },

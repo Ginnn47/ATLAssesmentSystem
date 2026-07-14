@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.utils.cache import patch_vary_headers
 
 
@@ -5,6 +6,13 @@ DEV_CORS_ORIGINS = {
     "http://127.0.0.1:5173",
     "http://localhost:5173",
 }
+
+
+def is_allowed_origin(origin):
+    if not origin:
+        return False
+    configured = set(getattr(settings, "CORS_ALLOWED_ORIGINS", [])) | DEV_CORS_ORIGINS
+    return origin in configured or origin.endswith(".ngrok-free.dev")
 
 
 class DevCorsMiddleware:
@@ -17,7 +25,7 @@ class DevCorsMiddleware:
             return response
 
         origin = request.META.get("HTTP_ORIGIN")
-        if origin in DEV_CORS_ORIGINS:
+        if is_allowed_origin(origin):
             response["Access-Control-Allow-Origin"] = origin
             patch_vary_headers(response, ("Origin",))
         response["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"

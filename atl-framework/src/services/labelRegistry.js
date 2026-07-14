@@ -72,7 +72,7 @@ export const hydrateLabelRegistry = async () => {
   try {
     const response = await api.get("labels/");
     if (response?.data?.atlCategories) registry = response.data;
-  } catch (error) {
+  } catch {
     registry = fallbackLabelRegistry;
   }
   return registry;

@@ -8,6 +8,7 @@ import BatchInputATL from "./components/dash/batch";
 import Report from "./components/dash/report";
 import ManageUser from "./components/dash/manageuser"
 import ATLmanage from "./components/dash/ATLmanage";
+import Login from "./components/auth/login";
 import { getCurrentUser } from "./services/atlApi";
 import { ROLE_CODES, canAccessRoute } from "./services/accessControl";
 
@@ -60,15 +61,16 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<Login />} />
+        <Route path="/login" element={<Login />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/students" element={<ProtectedRoute roles={[ROLE_CODES.HOMEROOM]}><StudManage /></ProtectedRoute>} />
         <Route path="/input-atl" element={<ProtectedRoute roles={[ROLE_CODES.EVALUATOR]}><DetailedInputATL /></ProtectedRoute>} />
         <Route path="/input-atl/batch" element={<ProtectedRoute roles={[ROLE_CODES.EVALUATOR]}><BatchInputATL /></ProtectedRoute>} />
-        <Route path="/reports" element={<ProtectedRoute roles={[ROLE_CODES.SUBJECT_COORDINATOR]}><Report /></ProtectedRoute>} />
+        <Route path="/reports" element={<ProtectedRoute roles={[ROLE_CODES.EVALUATOR, ROLE_CODES.HOMEROOM, ROLE_CODES.SUBJECT_COORDINATOR]}><Report /></ProtectedRoute>} />
         <Route path="/academic/manage" element={<ProtectedRoute roles={[ROLE_CODES.ADMIN]}><ManageUser /></ProtectedRoute>} />
         <Route path="/settings/users" element={<Navigate to="/academic/manage" replace />} />
-        <Route path="/atl/manage" element={<ProtectedRoute roles={[ROLE_CODES.ATL_EXPERT]}><ATLmanage page="criteria" /></ProtectedRoute>} />
+        <Route path="/atl/manage" element={<ProtectedRoute roles={[ROLE_CODES.SUBJECT_COORDINATOR, ROLE_CODES.ATL_EXPERT]}><ATLmanage page="criteria" /></ProtectedRoute>} />
         <Route path="/atl/weight" element={<ProtectedRoute roles={[ROLE_CODES.ATL_EXPERT]}><ATLmanage page="weight" /></ProtectedRoute>} />
         <Route path="/unauthorized" element={<Unauthorized />} />
       </Routes>

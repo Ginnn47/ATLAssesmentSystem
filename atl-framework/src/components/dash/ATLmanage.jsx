@@ -83,6 +83,14 @@ const getInitialSummaryTopic = () => {
   return window.localStorage.getItem(SUMMARY_TOPIC_KEY) || "";
 };
 
+const getPreferredTopicId = (subjects = []) => {
+  const singingSubject = subjects.find((subject) => subject.id === "singing");
+  const preferredSubject = singingSubject
+    || subjects.find((subject) => (subject.topics || []).length > 0)
+    || subjects[0];
+  return preferredSubject?.topics?.[0]?.id || "";
+};
+
 export default function ATLmanage({ page = "criteria" }) {
   const navigate = useNavigate();
   const isWeightPage = page === "weight";
@@ -114,7 +122,7 @@ export default function ATLmanage({ page = "criteria" }) {
         setSubjectTopics(accessibleSubjects);
         const topicIds = accessibleSubjects.flatMap((subject) => (subject.topics || []).map((topic) => topic.id));
         setSelectedTopic((current) => {
-          const nextTopic = current && topicIds.includes(current) ? current : topicIds[0] || "";
+          const nextTopic = current && topicIds.includes(current) ? current : getPreferredTopicId(accessibleSubjects);
           if (nextTopic && typeof window !== "undefined") {
             window.localStorage.setItem(SUMMARY_TOPIC_KEY, nextTopic);
           }
@@ -140,7 +148,7 @@ export default function ATLmanage({ page = "criteria" }) {
           setDataVersion((version) => version + 1);
         }
       })
-      .catch((error) => {
+      .catch(() => {
         if (!cancelled) {
         setBackendError("Backend belum tersambung. Menampilkan data terakhir.");
         setDataVersion((version) => version + 1);
@@ -163,7 +171,7 @@ export default function ATLmanage({ page = "criteria" }) {
             setDataVersion((version) => version + 1);
           }
         })
-        .catch((error) => {
+        .catch(() => {
           if (!cancelled) setBackendError("Backend belum tersambung. Menampilkan data terakhir.");
         });
     };

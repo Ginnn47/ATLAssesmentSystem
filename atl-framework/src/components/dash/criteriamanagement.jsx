@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { dummyATL, saveATLData } from "../dummyData/dummyATL";
 import { createContext, createCriterion, deleteCriterion, deleteTopic, getATLHierarchy, getCriteria, getTopics, updateCriterion, getCurrentUser } from "../../services/atlApi";
 import { filterSubjectsByUserAccess } from "../../services/accessControl";
@@ -42,6 +42,7 @@ export default function CriteriaManagement() {
   const [newSubtopicName, setNewSubtopicName] = useState("");
   const [newSubtopicDescription, setNewSubtopicDescription] = useState("");
   const [deletingSubtopicId, setDeletingSubtopicId] = useState("");
+  const selectedSubtopicRef = useRef(selectedSubtopic);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -69,6 +70,10 @@ export default function CriteriaManagement() {
   // Get current subject config
   const currentSubjectConfig = subjects.find((s) => s.id === selectedSubject);
   const currentSubtopics = subjects.find((subject) => subject.id === selectedSubject)?.topics || [];
+
+  useEffect(() => {
+    selectedSubtopicRef.current = selectedSubtopic;
+  }, [selectedSubtopic]);
 
   const findSubskillMeta = (value, categoryName) => {
     for (const category of atlHierarchy) {
@@ -216,10 +221,16 @@ export default function CriteriaManagement() {
         const nextSubjects = buildSubjects(user);
         setSubjects(nextSubjects);
         const topicIds = nextSubjects.flatMap((subject) => (subject.topics || []).map((topic) => topic.id));
-        if (!topicIds.includes(selectedSubtopic)) {
+        const activeSubtopic = selectedSubtopicRef.current;
+        if (!topicIds.includes(activeSubtopic)) {
           const firstSubject = nextSubjects[0];
           setSelectedSubject(firstSubject?.id || "");
           setSelectedSubtopic(firstSubject?.topics?.[0]?.id || "");
+        } else {
+          const activeSubject = nextSubjects.find((subject) =>
+            (subject.topics || []).some((topic) => topic.id === activeSubtopic)
+          );
+          if (activeSubject) setSelectedSubject(activeSubject.id);
         }
         if (topicsResult.status === "rejected") {
           setBackendError("Mengambil data saat ini. Menampilkan data yang tersedia.");
@@ -440,6 +451,8 @@ export default function CriteriaManagement() {
   };
 
   const handleAddCriteria = async () => {
+    const activeTopicId = selectedSubtopic;
+    const activeSubjectId = selectedSubject;
     const chosenSubskills = selectedSubskills.length > 0 ? selectedSubskills : selectedCategorySubskills;
     const chosenCategory = chosenSubskills.length > 0 ? findCategoryForSubskill(chosenSubskills[0].id) : selectedCategory;
     const chosenCategories = chosenCategory ? [chosenCategory] : [];
@@ -469,7 +482,7 @@ export default function CriteriaManagement() {
     };
 
     if (editingIndex !== null) {
-      const previousCriterion = dummyATL[selectedSubtopic][editingIndex];
+      const previousCriterion = dummyATL[activeTopicId][editingIndex];
       let savedCriterion = null;
       try {
         savedCriterion = await updateCriterion(previousCriterion.id, normalizedFormData);
@@ -481,7 +494,7 @@ export default function CriteriaManagement() {
         alert("Gagal menyimpan perubahan kriteria ke backend.");
         return;
       }
-      dummyATL[selectedSubtopic][editingIndex] = {
+      dummyATL[activeTopicId][editingIndex] = {
         ...normalizedFormData,
         id: savedCriterion.id,
         category: savedCriterion.category || normalizedFormData.category,
@@ -491,12 +504,12 @@ export default function CriteriaManagement() {
         subskillIds: savedCriterion.subskillIds || normalizedFormData.subskillIds,
         criteriaTopic: savedCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
       };
-      syncCriterionReferences(selectedSubtopic, previousCriterion, dummyATL[selectedSubtopic][editingIndex]);
+      syncCriterionReferences(activeTopicId, previousCriterion, dummyATL[activeTopicId][editingIndex]);
       setEditingIndex(null);
     } else {
       let createdCriterion = null;
       try {
-        createdCriterion = await createCriterion(selectedSubtopic, normalizedFormData);
+        createdCriterion = await createCriterion(activeTopicId, normalizedFormData);
       } catch (error) {
         alert(error.message || "Gagal menyimpan kriteria baru ke backend.");
         return;
@@ -505,8 +518,8 @@ export default function CriteriaManagement() {
         alert("Gagal menyimpan kriteria baru ke backend.");
         return;
       }
-      if (!dummyATL[selectedSubtopic]) dummyATL[selectedSubtopic] = [];
-      dummyATL[selectedSubtopic].push({
+      if (!dummyATL[activeTopicId]) dummyATL[activeTopicId] = [];
+      dummyATL[activeTopicId].push({
         ...normalizedFormData,
         id: createdCriterion.id,
         category: createdCriterion.category || normalizedFormData.category,
@@ -519,7 +532,11 @@ export default function CriteriaManagement() {
     }
 
     persistATLChanges();
-    await refreshSelectedSubtopicFromBackend(selectedSubtopic);
+    setSelectedSubject(activeSubjectId);
+    setSelectedSubtopic(activeTopicId);
+    await refreshSelectedSubtopicFromBackend(activeTopicId);
+    setSelectedSubject(activeSubjectId);
+    setSelectedSubtopic(activeTopicId);
 
     setFormData({
       kriteria: "",
@@ -747,7 +764,9 @@ export default function CriteriaManagement() {
               Daftar Kriteria ({currentCriteria.length})
             </h3>
             <p className="text-xs text-text-sub-light mt-1">
+              <span data-testid="criteria-selected-subtopic-label">
               {currentSubtopics.find((s) => s.id === selectedSubtopic)?.label}
+              </span>
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -764,6 +783,7 @@ export default function CriteriaManagement() {
               {deletingSubtopicId === selectedSubtopic ? "Menghapus Subtopik..." : "Hapus Subtopik"}
             </button>
             <button
+              data-testid="criteria-add-button"
               onClick={() => {
                 setShowAddForm(!showAddForm);
                 if (showAddForm) handleCancel();
@@ -877,6 +897,7 @@ export default function CriteriaManagement() {
                 Topik Kriteria ATL
               </label>
               <input
+                data-testid="criteria-topic-input"
                 type="text"
                 value={formData.criteriaTopic}
                 onChange={(e) =>
@@ -896,6 +917,7 @@ export default function CriteriaManagement() {
                 Nama Kriteria
               </label>
               <input
+                data-testid="criteria-name-input"
                 type="text"
                 value={formData.kriteria}
                 onChange={(e) =>
@@ -921,6 +943,7 @@ export default function CriteriaManagement() {
 
                   return (
                     <button
+                      data-testid={`criteria-category-option-${category.id}`}
                       key={category.id}
                       type="button"
                       onClick={() => setCategorySelection(category)}
@@ -955,6 +978,7 @@ export default function CriteriaManagement() {
 
                   return (
                     <button
+                      data-testid={`criteria-subskill-option-${subskill.id}`}
                       key={subskill.id}
                       type="button"
                       onClick={() => setSubskillSelection(subskill)}
@@ -1002,6 +1026,7 @@ export default function CriteriaManagement() {
                       <span className="text-primary">{level}</span> — {levelDescriptions[level]}
                     </label>
                     <textarea
+                      data-testid={`criteria-level-${level.toLowerCase()}-input`}
                       value={formData.levels[level]}
                       onChange={(e) =>
                         handleLevelChange(level, e.target.value)
@@ -1018,6 +1043,7 @@ export default function CriteriaManagement() {
             {/* Action Buttons */}
             <div className="flex gap-3 pt-4">
               <button
+                data-testid="criteria-save-button"
                 onClick={handleAddCriteria}
                 className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-primary-hover"
               >

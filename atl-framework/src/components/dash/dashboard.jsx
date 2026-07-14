@@ -46,6 +46,7 @@ const emptyDashboard = {
     { name: "Nadia Fatthurrahmi", progress: 0, color: "#F6B21A" },
     { name: "Budhi Nugroho", progress: 0, color: "#EF4444" },
   ],
+  topicAssessmentProgress: [],
   recentActivities: [],
   workflow: [
     { step: 1, title: "Input Nilai", note: "Guru mengisi rating ATL berdasarkan rubrik.", icon: "edit_note", color: "#45B978" },
@@ -62,12 +63,117 @@ const emptyDashboard = {
   ],
 };
 
-const cardTone = {
-  blue: "bg-blue-100 text-blue-600",
-  sky: "bg-sky-100 text-sky-600",
-  amber: "bg-amber-100 text-amber-600",
-  violet: "bg-violet-100 text-violet-600",
-  green: "bg-emerald-100 text-emerald-600",
+const demoDistribution = [
+  { category: "Thinking Skills", score: 78, color: "#4F8DE8" },
+  { category: "Communication Skills", score: 74, color: "#F6B21A" },
+  { category: "Social Skills", score: 69, color: "#45B978" },
+  { category: "Self-Management Skills", score: 72, color: "#7C4CE0" },
+  { category: "Research Skills", score: 66, color: "#EF4444" },
+];
+
+const demoDashboard = {
+  meta: { semester: "Semester 2 (2024/2025)", updatedAt: new Date().toISOString(), source: "dummy" },
+  summary: {
+    average: 72,
+    completion: 76,
+    totalStudents: 90,
+    assessedStudents: 68,
+    assessmentSaved: 842,
+    topicActive: 6,
+    criteriaCount: 28,
+    bestClass: "3A - Primary",
+    needAttention: 7,
+    strongestATL: "Thinking Skills",
+    focusATL: "Research Skills",
+    totalUsers: 7,
+    totalGuruAktif: 4,
+    totalClasses: 6,
+    totalSubjects: 3,
+    totalActiveTopic: 8,
+    assessmentRecords: 842,
+    evaluatorUsers: 3,
+    subjectCoordinatorUsers: 2,
+    atlExpertUsers: 1,
+    pairwiseConfiguration: 12,
+    weightAvailable: true,
+    level: { label: "Meeting Expectation", code: "ME", color: "#4F8DE8" },
+  },
+  overviewCards: [
+    { label: "Cakupan Rubrik", value: "76%", note: "Demo cepat sambil mengambil data backend.", icon: "fact_check", color: "blue" },
+    { label: "Siswa Dinilai", value: "68/90", note: "Jumlah siswa dengan minimal satu nilai ATL.", icon: "groups", color: "amber" },
+    { label: "Nilai Tersimpan", value: "842", note: "Total rating ATL contoh untuk tampilan awal.", icon: "assignment_turned_in", color: "sky" },
+    { label: "Topik Aktif", value: "8", note: "Topik pembelajaran aktif pada data contoh.", icon: "auto_stories", color: "violet" },
+  ],
+  atlDistribution: demoDistribution,
+  analysisScopes: [
+    {
+      key: "all",
+      label: "Semua Kelas",
+      type: "all",
+      distribution: demoDistribution,
+      average: 72,
+      completion: 76,
+      assessedStudents: 68,
+      totalStudents: 90,
+      strongestATL: "Thinking Skills",
+      focusATL: "Research Skills",
+    },
+    {
+      key: "class-3a",
+      label: "3A - Primary",
+      type: "class",
+      className: "3A - Primary",
+      distribution: [
+        { category: "Thinking Skills", score: 82, color: "#4F8DE8" },
+        { category: "Communication Skills", score: 77, color: "#F6B21A" },
+        { category: "Social Skills", score: 73, color: "#45B978" },
+        { category: "Self-Management Skills", score: 75, color: "#7C4CE0" },
+        { category: "Research Skills", score: 70, color: "#EF4444" },
+      ],
+      average: 75,
+      completion: 83,
+      assessedStudents: 15,
+      totalStudents: 18,
+      strongestATL: "Thinking Skills",
+      focusATL: "Research Skills",
+    },
+    {
+      key: "subject-singing",
+      label: "Singing",
+      type: "subject",
+      subjectCode: "singing",
+      subjectLabel: "Singing",
+      distribution: demoDistribution,
+      average: 74,
+      completion: 80,
+      assessedStudents: 44,
+      totalStudents: 55,
+      strongestATL: "Communication Skills",
+      focusATL: "Research Skills",
+    },
+  ],
+  classComparison: [
+    { className: "3A - Primary", average: 75 },
+    { className: "4A - Primary", average: 71 },
+    { className: "5A - Primary", average: 69 },
+    { className: "6B - Primary", average: 73 },
+  ],
+  attentionStudents: [
+    { name: "Azeeze Shafa", className: "3A - Primary", score: 58, issue: "Research Skills" },
+    { name: "Kylian Mbappe", className: "3A - Primary", score: 54, issue: "Self-Management Skills" },
+    { name: "Lionel Messi", className: "4A - Primary", score: 56, issue: "Communication Skills" },
+  ],
+  teacherMonitoring: [
+    { name: "Joko Wiryanto", progress: 82, color: "#45B978" },
+    { name: "Megawati Putri", progress: 74, color: "#F6B21A" },
+    { name: "Andi Prasetyo", progress: 68, color: "#EF4444" },
+  ],
+  topicAssessmentProgress: [],
+  recentActivities: [
+    { actor: "Megawati Putri", title: "Input nilai Singing - Christmas Carol", time: new Date().toISOString() },
+    { actor: "Joko Wiryanto", title: "Update kriteria IPA - Energi Perubahan", time: new Date().toISOString() },
+    { actor: "Rionaldus S", title: "Simpan bobot Fuzzy-AHP Singing", time: new Date().toISOString() },
+  ],
 };
 
 const overviewTone = {
@@ -185,6 +291,7 @@ const mergeDashboardData = (data) => {
     "trend",
     "classComparison",
     "teacherMonitoring",
+    "topicAssessmentProgress",
     "workflow",
     "documents",
   ].forEach((key) => {
@@ -212,17 +319,19 @@ const StatCard = ({ item }) => {
 };
 
 const DonutChart = ({ rows }) => {
-  let cursor = 0;
   const total = rows.reduce((sum, row) => sum + Number(row.score || 0), 0) || 1;
-  const gradient = rows
-    .map((row) => {
+  const gradient = rows.reduce(
+    (acc, row) => {
       const share = (Number(row.score || 0) / total) * 100;
-      const start = cursor;
-      const end = cursor + share;
-      cursor = end;
-      return `${row.color} ${start}% ${end}%`;
-    })
-    .join(", ");
+      const start = acc.cursor;
+      const end = acc.cursor + share;
+      return {
+        cursor: end,
+        parts: [...acc.parts, `${row.color} ${start}% ${end}%`],
+      };
+    },
+    { cursor: 0, parts: [] }
+  ).parts.join(", ");
 
   return (
     <div className="grid gap-8 xl:grid-cols-[320px_1fr]">
@@ -423,30 +532,45 @@ const AttentionStudentsCard = ({ students = [], title = "Siswa Perlu Perhatian" 
   </div>
 );
 
-const TeacherMonitoringCard = ({ rows = [] }) => (
+const TopicAssessmentProgressCard = ({ rows = [], loading = false }) => (
   <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
-    <h2 className="text-base font-black text-stone-950">Monitor Penilaian Guru</h2>
-    <p className="mt-2 text-xs font-semibold text-stone-500">Progress input penilaian ATL oleh guru.</p>
+    <h2 className="text-base font-black text-stone-950">Progress Penilaian Per Topik</h2>
+    <p className="mt-2 text-xs font-semibold text-stone-500">Diambil dari data penilaian saat ini pada page input ATL.</p>
     <div className="mt-5 space-y-4">
-      {rows.length > 0 ? rows.map((teacher) => (
-        <div key={teacher.name} className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-full bg-stone-100 text-stone-500">
-            <span className="material-symbols-outlined text-lg">person</span>
+      {rows.length > 0 ? rows.slice(0, 5).map((topic) => (
+        <div key={topic.topicId || topic.topicLabel} className="rounded-2xl border border-stone-100 bg-stone-50 px-4 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-xs font-black text-stone-900">
+                {topic.topicLabel || topic.topic || topic.topicId} -- {topic.subjectLabel || topic.subject || "Subject"}
+              </p>
+              <p className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-wide text-stone-500">
+                {(topic.classScope || []).length ? `Kelas: ${topic.classScope.join(", ")}` : "Berdasarkan kelas yang memiliki penilaian"}
+              </p>
+            </div>
+            <span className="shrink-0 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-black text-primary">
+              {topic.progress || 0}%
+            </span>
           </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-black text-stone-900">{teacher.name}</p>
-            <p className="mt-0.5 text-[10px] font-semibold text-stone-500">{teacher.role || "Pengajar"} | {teacher.assessmentCount || 0} input</p>
-            <div className="mt-1 h-2 rounded-full bg-stone-100">
-              <div className="h-full rounded-full" style={{ width: `${teacher.progress}%`, backgroundColor: teacher.color }} />
+          <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-stone-200">
+            <div className="h-full rounded-full bg-gradient-to-r from-primary to-amber-400" style={{ width: `${Math.min(100, Number(topic.progress || 0))}%` }} />
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
+              <p className="text-[9px] font-black uppercase tracking-widest text-emerald-600">Ternilai</p>
+              <p className="mt-1 text-sm font-black text-emerald-700">{topic.assessedStudents || 0}/{topic.totalStudents || 0}</p>
+            </div>
+            <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2">
+              <p className="text-[9px] font-black uppercase tracking-widest text-amber-600">Belum Ternilai</p>
+              <p className="mt-1 text-sm font-black text-amber-700">{topic.unassessedStudents || 0}/{topic.totalStudents || 0}</p>
             </div>
           </div>
-          <span className="text-xs font-black text-stone-500">{teacher.progress || 0}%</span>
         </div>
       )) : (
         <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-6 text-center">
-          <span className="material-symbols-outlined text-3xl text-stone-400">assignment_late</span>
-          <p className="mt-2 text-xs font-black text-stone-700">Belum ada input guru</p>
-          <p className="mt-1 text-[11px] font-semibold text-stone-500">Progress akan muncul setelah guru menyimpan penilaian.</p>
+          <span className={`material-symbols-outlined text-3xl text-stone-400 ${loading ? "animate-spin" : ""}`}>{loading ? "sync" : "assignment_late"}</span>
+          <p className="mt-2 text-xs font-black text-stone-700">{loading ? "Mengambil data saat ini" : "Belum ada progress topik"}</p>
+          <p className="mt-1 text-[11px] font-semibold text-stone-500">{loading ? "Progress akan memakai data input ATL terbaru." : "Progress akan muncul setelah penilaian ATL tersimpan."}</p>
         </div>
       )}
     </div>
@@ -520,29 +644,36 @@ const ATLFlowBanner = ({ open, onToggle }) => (
 );
 
 export default function Dashboard() {
-  const [dashboard, setDashboard] = useState(emptyDashboard);
+  const [dashboard, setDashboard] = useState(() => mergeDashboardData(demoDashboard));
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [backendError, setBackendError] = useState("");
   const [showFlowPoster, setShowFlowPoster] = useState(false);
   const [analysisScopeKey, setAnalysisScopeKey] = useState("all");
 
-  const loadDashboard = async () => {
+  const loadDashboard = async ({ silent = false } = {}) => {
+    if (!silent) setBackendError("");
     setLoading(true);
     try {
       const data = await getDashboardAnalytics();
-      setDashboard(mergeDashboardData(data));
+      setDashboard(mergeDashboardData({
+        ...data,
+        meta: {
+          ...(data?.meta || {}),
+          source: "backend",
+          updatedAt: data?.meta?.updatedAt || new Date().toISOString(),
+        },
+      }));
       setBackendError("");
-    } catch (error) {
-      setDashboard(emptyDashboard);
-      setBackendError(error.message || "Dashboard gagal mengambil data dari backend.");
+    } catch {
+      setBackendError("Belum tersambung ke data terbaru.");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadDashboard();
+    loadDashboard({ silent: true });
     getCurrentUser().then((user) => setCurrentUser(user));
     window.addEventListener("focus", loadDashboard);
     window.addEventListener("atl-data-updated", loadDashboard);
@@ -562,6 +693,12 @@ export default function Dashboard() {
   }, [showFlowPoster]);
 
   const summary = dashboard.summary || emptyDashboard.summary;
+  const isUsingDemoData = dashboard.meta?.source !== "backend";
+  const refreshStatusText = loading
+    ? "Mengambil data saat ini"
+    : isUsingDemoData
+      ? "Menampilkan data sementara"
+      : `Data diperbarui: ${formatTime(dashboard.meta?.updatedAt)}`;
   const roleCodes = getUserRoleCodes(currentUser);
   const isAdminDashboard = isAdminUser(currentUser);
   const adminOverviewCards = [
@@ -670,16 +807,25 @@ export default function Dashboard() {
                     </p>
                   </div>
                   <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-right">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Update Data</p>
-                    <p className="mt-1 text-sm font-black text-stone-800">{formatTime(dashboard.meta?.updatedAt)}</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Status Data</p>
+                    <p className="mt-1 text-sm font-black text-stone-800">{refreshStatusText}</p>
+                    <button
+                      type="button"
+                      onClick={() => loadDashboard()}
+                      disabled={loading}
+                      className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-black text-stone-950 transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <span className={`material-symbols-outlined text-[16px] ${loading ? "animate-spin" : ""}`}>sync</span>
+                      Update Data
+                    </button>
                   </div>
                 </div>
               </header>
 
               {backendError && (
-                <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
-                  <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
-                  {backendError}
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-800">
+                  <span className="material-symbols-outlined mr-2 align-middle text-[18px]">info</span>
+                  {backendError} Tampilan tetap memakai data sementara sampai update berikutnya berhasil.
                 </div>
               )}
 
@@ -812,7 +958,7 @@ export default function Dashboard() {
               />
 
               <footer className="pb-4 text-[11px] font-semibold text-stone-400">
-                <span>{loading ? "Memuat data dashboard..." : `Data diperbarui: ${formatTime(dashboard.meta?.updatedAt)}`}</span>
+                <span>{refreshStatusText}</span>
               </footer>
             </div>
           </div>
@@ -834,7 +980,16 @@ export default function Dashboard() {
                 <h1 className="mt-3 text-3xl font-black tracking-tight text-stone-950">{dashboardTitle}</h1>
                 <p className="mt-2 text-sm font-semibold text-stone-500">{dashboardSubtitle}</p>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => loadDashboard()}
+                  disabled={loading}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-stone-950 shadow-sm transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className={`material-symbols-outlined text-lg ${loading ? "animate-spin" : ""}`}>sync</span>
+                  Update Data
+                </button>
                 <button className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-bold text-stone-700 shadow-sm">
                   <span className="material-symbols-outlined text-lg text-stone-500">calendar_month</span>
                   {dashboard.meta?.semester || "Semester 2 (2024/2025)"}
@@ -851,9 +1006,9 @@ export default function Dashboard() {
             </header>
 
             {backendError && (
-              <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
-                <span className="material-symbols-outlined mr-2 align-middle text-[18px]">error</span>
-                {backendError} Data dummy/localStorage tidak dipakai sebagai pengganti.
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-bold text-amber-800">
+                <span className="material-symbols-outlined mr-2 align-middle text-[18px]">info</span>
+                {backendError} Tampilan tetap memakai data sementara sampai update berikutnya berhasil.
               </div>
             )}
 
@@ -874,7 +1029,7 @@ export default function Dashboard() {
                 </div>
                 <div className="inline-flex w-fit items-center gap-2 rounded-full bg-stone-100 px-3 py-2 text-[11px] font-black text-stone-500">
                   <span className="material-symbols-outlined text-[15px]">calendar_month</span>
-                  Update {formatTime(dashboard.meta?.updatedAt)}
+                  {refreshStatusText}
                 </div>
               </div>
               <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
@@ -901,7 +1056,7 @@ export default function Dashboard() {
                       ))}
                     </div>
                   </div>
-                  <TeacherMonitoringCard rows={dashboard.teacherMonitoring || []} />
+                  <TopicAssessmentProgressCard rows={dashboard.topicAssessmentProgress || []} loading={loading} />
                   <div className="rounded-[1.6rem] border border-stone-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.04)]">
                     <h2 className="text-base font-black text-stone-950">Configuration Status</h2>
                     <p className="mt-2 text-xs font-semibold text-stone-500">Status konfigurasi utama ATL.</p>
@@ -959,7 +1114,7 @@ export default function Dashboard() {
 
             <footer className="flex flex-col gap-2 pb-4 text-[11px] font-semibold text-stone-400 md:flex-row md:items-center md:justify-between">
               <span>© 2024 Cita Hati Surabaya - ATL Assessment System</span>
-              <span>{loading ? "Memuat data dashboard..." : `Data diperbarui: ${formatTime(dashboard.meta?.updatedAt)}`}</span>
+              <span>{refreshStatusText}</span>
             </footer>
           </div>
         </div>

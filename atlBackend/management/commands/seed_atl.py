@@ -16,7 +16,12 @@ from atlBackend.models import (
 )
 from atlBackend.seed_data import EXTRA_TOPICS, TOPIC_RUBRICS, USER_SEEDS
 from atlBackend.services.catalog import STUDENTS, SUBJECTS
-from atlBackend.services.contextual_atl import ensure_contextual_seed, normalize_rubric_subskills, sync_rubric_item_subskills
+from atlBackend.services.contextual_atl import (
+    ensure_contextual_seed,
+    normalize_rubric_subskills,
+    reset_pairwise_scale_options,
+    sync_rubric_item_subskills,
+)
 
 
 def split_name(full_name):
@@ -43,6 +48,7 @@ class Command(BaseCommand):
         self.seed_extra_contexts(subjects)
         self.seed_users(classes, subjects)
         self.seed_rubrics()
+        self.reset_pairwise_scales()
 
         self.stdout.write(self.style.SUCCESS("ATL seed complete."))
 
@@ -198,3 +204,7 @@ class Command(BaseCommand):
                     },
                 )
                 sync_rubric_item_subskills(item, selected)
+
+    def reset_pairwise_scales(self):
+        for context in LearningContext.objects.all():
+            reset_pairwise_scale_options(context)

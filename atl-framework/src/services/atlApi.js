@@ -7,6 +7,22 @@ import {
 import { getSubjectData, setSubjectData } from "./topicCatalog";
 
 const unwrap = (response) => response?.data || {};
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const requestWithRetry = async (operation, { attempts = 4, delay = 350 } = {}) => {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const status = error?.response?.status;
+      const retryable = !status || [404, 409, 423, 429, 500, 502, 503, 504].includes(status);
+      if (!retryable || attempt === attempts - 1) break;
+      await sleep(delay * (attempt + 1));
+    }
+  }
+  throw lastError;
+};
 const ASSESSMENT_DRAFT_STORAGE_KEY = "atl_assessment_drafts";
 const ASSESSMENT_LIVE_DRAFT_STORAGE_KEY = "atl_assessment_live_drafts";
 const ASSESSMENT_FILTER_STORAGE_KEY = "atl_assessment_filter_state";
@@ -26,23 +42,6 @@ const raiseApiError = (error, fallback) => {
 const clearCachedAuth = () => {
   localStorage.removeItem("atl_current_user");
 };
-
-const PRESENTATION_ADMIN_USER = {
-  id: "presentation-admin",
-  username: "admin",
-  name: "Afrizal Haykal",
-  email: "admin@atl.local",
-  role: "Admin",
-  roleLabel: "Admin",
-  roleGroup: "Admin",
-  roles: ["ROLE_ADMIN"],
-  roleCodes: ["ROLE_ADMIN"],
-  isSuperuser: true,
-  classAccess: [],
-  subjectAccess: [],
-};
-
-const getPresentationAdminUser = () => ({ ...PRESENTATION_ADMIN_USER });
 
 const readStorageObject = (key) => {
   try {
@@ -119,7 +118,7 @@ const markReportDataDirty = () => {
 export const loginUser = async ({ username, password }) => {
   let loginData;
   try {
-    loginData = unwrap(await api.post("auth/login/", { username, password }));
+    loginData = unwrap(await api.post("auth/login/", { username: String(username || "").trim(), password }));
   } catch (error) {
     const message = error.response?.data?.error || "Username atau password tidak valid.";
     throw new Error(message);
@@ -149,14 +148,10 @@ export const getCurrentUser = async () => {
   try {
     const data = unwrap(await api.get("auth/me/"));
     if (data.user) localStorage.setItem("atl_current_user", JSON.stringify(data.user));
-    if (data.user) return data.user;
-    const presentationUser = getPresentationAdminUser();
-    localStorage.setItem("atl_current_user", JSON.stringify(presentationUser));
-    return presentationUser;
+    return data.user || null;
   } catch {
-    const presentationUser = getPresentationAdminUser();
-    localStorage.setItem("atl_current_user", JSON.stringify(presentationUser));
-    return presentationUser;
+    clearCachedAuth();
+    return null;
   }
 };
 
@@ -305,6 +300,12 @@ export const updateUser = async (userId, payload) => {
   return data.user || null;
 };
 
+export const deleteUser = async (userId) => {
+  if (!userId) throw new Error("User belum dipilih.");
+  await api.delete(`users/${userId}/`);
+  return true;
+};
+
 const ATL_CATEGORY_ORDER = getATLDistributionTemplate().map((item) => item.category);
 
 const emptyCategoryBuckets = () => ATL_CATEGORY_ORDER.reduce((acc, category) => ({ ...acc, [category]: [] }), {});
@@ -404,7 +405,7 @@ const criterionFromRubricItem = (item) => ({
 });
 
 export const getContextFlow = async (topicId) => {
-  const data = unwrap(await api.get(`contexts/${topicId}/flow/`));
+  const data = unwrap(await requestWithRetry(() => api.get(`contexts/${topicId}/flow/`)));
   const criteria = contextCriteriaFromFlow(data);
   const weights = data.weights && Object.keys(data.weights).length > 0
     ? data.debug?.packages
@@ -529,7 +530,7 @@ export const deleteTopic = async (topicId) => {
 
 export const getATLHierarchy = async () => {
   try {
-    const data = unwrap(await api.get("atl/hierarchy/"));
+    const data = unwrap(await requestWithRetry(() => api.get("atl/hierarchy/")));
     if (Array.isArray(data.categories)) return data.categories;
     return [];
   } catch (error) {
@@ -568,7 +569,7 @@ export const getCriteria = async (topicId) => {
   }
 
   try {
-    const data = unwrap(await api.get(`topics/${topicId}/criteria/`));
+    const data = unwrap(await requestWithRetry(() => api.get(`topics/${topicId}/criteria/`)));
     if (Array.isArray(data.criteria) && data.criteria.length === 0) {
       if (cachedCriteria.length > 0) {
         return criteriaWithMeta(cachedCriteria, {
@@ -597,7 +598,7 @@ export const getCriteria = async (topicId) => {
 export const createCriterion = async (topicId, criterion) => {
   let primaryError = null;
   try {
-    const data = unwrap(await api.post(`topics/${topicId}/criteria/`, criterion));
+    const data = unwrap(await requestWithRetry(() => api.post(`topics/${topicId}/criteria/`, criterion), { attempts: 3, delay: 500 }));
     return data.criterion || null;
   } catch (error) {
     primaryError = error;
@@ -809,19 +810,21 @@ export const getClassAnalytics = async (className) => {
 };
 
 export const hydrateTopic = async (topicId) => {
-  const [flowResult, assessmentResult] = await Promise.allSettled([
+  const [criteriaResult, flowResult, assessmentResult] = await Promise.allSettled([
+    getCriteria(topicId),
     getContextFlow(topicId),
     getAssessments({ topicId }),
   ]);
+  const criteria = criteriaResult.status === "fulfilled" ? criteriaResult.value : [];
   const flow = flowResult.status === "fulfilled" ? flowResult.value : {};
   const assessments = assessmentResult.status === "fulfilled" ? assessmentResult.value : dummyATL.savedAssessments || {};
   const cachedCriteria = dummyATL[topicId] || [];
-  const errors = [flowResult, assessmentResult]
+  const errors = [criteriaResult, flowResult, assessmentResult]
     .filter((result) => result.status === "rejected")
     .map((result) => result.reason?.message)
     .filter(Boolean);
   return {
-    criteria: flow.criteria?.length > 0 ? flow.criteria : cachedCriteria,
+    criteria: criteria.length > 0 ? criteria : flow.criteria?.length > 0 ? flow.criteria : cachedCriteria,
     weights: flow.weights || {},
     assessments,
     flow,

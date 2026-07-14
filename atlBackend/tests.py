@@ -251,6 +251,9 @@ class ReportExcelExportTests(TestCase):
         self.settings_override.enable()
         self.addCleanup(self.settings_override.disable)
         self.archive_dir = Path(self.temp_dir.name) / "Document Output"
+        self.user = User.objects.create_user(username="exporter", password="atl12345")
+        UserProfile.objects.create(user=self.user, role_label="Evaluator", role_group="Evaluator", status="Aktif")
+        self.client.force_login(self.user)
 
     def post_export(self, payload, origin=None):
         extra = {"HTTP_ORIGIN": origin} if origin else {}
@@ -289,6 +292,19 @@ class ReportExcelExportTests(TestCase):
         self.assertEqual(archived_file.name, "ATL_Report_Test.xlsx")
         self.assertTrue(archived_file.exists())
         self.assertEqual(archived_file.read_bytes(), response.content)
+
+    def test_report_export_requires_login(self):
+        self.client.logout()
+        response = self.post_export(
+            {
+                "meta": {"filename": "ATL Report Test.xlsx"},
+                "columns": [{"key": "name", "label": "NAME"}],
+                "rows": [{"name": "Siswa A"}],
+            }
+        )
+
+        self.assertIn(response.status_code, [401, 403])
+        self.assertFalse(self.archive_dir.exists())
 
     def test_report_export_requires_columns(self):
         response = self.post_export({"meta": {}, "columns": [], "rows": []})
@@ -513,7 +529,6 @@ class AssessmentSyncTests(TestCase):
         self.assertEqual(StudentAssessment.objects.filter(student_id="1", context=self.context).count(), 0)
 
     def test_assessment_preview_scores_draft_without_persisting_it(self):
-        self.client.logout()
         response = self.client.post(
             "/api/assessments/preview/",
             data=json.dumps(
@@ -532,6 +547,33 @@ class AssessmentSyncTests(TestCase):
         self.assertGreater(response.json()["scores"]["2"]["rawScore"], response.json()["scores"]["1"]["rawScore"])
         self.assertEqual(Assessment.objects.count(), 0)
         self.assertEqual(StudentAssessment.objects.count(), 0)
+
+    def test_assessment_preview_requires_login(self):
+        self.client.logout()
+        response = self.client.post(
+            "/api/assessments/preview/",
+            data=json.dumps(
+                {
+                    "items": [
+                        {"studentId": "1", "topic": "singing_christmas_carol", "ratings": {self.rating_key: "Meeting Expectation"}},
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertIn(response.status_code, [401, 403])
+        self.assertEqual(Assessment.objects.count(), 0)
+        self.assertEqual(StudentAssessment.objects.count(), 0)
+
+    def test_report_requires_login(self):
+        self.client.logout()
+        response = self.client.get(
+            "/api/reports/",
+            data={"class": "3A - Primary", "topic": "singing_christmas_carol"},
+        )
+
+        self.assertIn(response.status_code, [401, 403])
 
     def test_report_with_configured_criteria_returns_no_data_before_assessment(self):
         response = self.client.get(

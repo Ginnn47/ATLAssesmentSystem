@@ -24,6 +24,7 @@ const FormulaHint = ({ text }) => (
 const REPORT_CACHE_KEY = "atl_report_cache_v1";
 const REPORT_DIRTY_KEY = "atl_report_data_dirty_at";
 const REPORT_CACHE_VERSION = 1;
+const showLegacyDetailModal = false;
 const MAX_REPORT_SNAPSHOTS = 10;
 const DEFAULT_REPORT_FILTER = {
   cls: "3A - Primary",
@@ -1605,7 +1606,7 @@ const scoreLevel = getScoreLevel;
           </div>
         )}
 
-        {false && selectedDetailStudent && (
+        {showLegacyDetailModal && selectedDetailStudent && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
             <div className="max-h-[94vh] w-full max-w-5xl overflow-hidden rounded-[2rem] border border-stone-200 bg-white shadow-[0_28px_80px_rgba(15,23,42,0.24)]">
               <div className="max-h-[94vh] overflow-y-auto p-6 lg:p-10">

@@ -129,6 +129,7 @@ export default function Login() {
                       </span>
                     </div>
                     <input
+                      data-testid="login-username"
                       type="text"
                       placeholder="Masukkan username, email, atau NIP"
                       className="w-full rounded-2xl border border-stone-200 bg-stone-50 py-4 pl-12 pr-4 font-body text-sm text-stone-900 outline-none transition duration-200 placeholder:text-stone-400 focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/15"
@@ -155,6 +156,7 @@ export default function Login() {
                       </span>
                     </div>
                     <input
+                      data-testid="login-password"
                       type={showPassword ? "text" : "password"}
                       placeholder="Masukkan password akun"
                       className="w-full rounded-2xl border border-stone-200 bg-stone-50 py-4 pl-12 pr-14 font-body text-sm text-stone-900 outline-none transition duration-200 placeholder:text-stone-400 focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/15"
@@ -196,6 +198,7 @@ export default function Login() {
                 </div>
 
                 <button
+                  data-testid="login-submit"
                   type="submit"
                   disabled={isSubmitting}
                   className="group inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-6 py-4 font-body text-sm font-semibold text-stone-950 shadow-[0_18px_35px_rgba(234,179,8,0.3)] transition duration-200 hover:-translate-y-0.5 hover:bg-secondary hover:shadow-[0_24px_40px_rgba(203,172,4,0.35)] active:translate-y-0"

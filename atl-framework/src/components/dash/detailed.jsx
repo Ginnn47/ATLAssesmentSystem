@@ -4,7 +4,6 @@ import Sidebar from "./sidebar";
 import { dummyATL } from "../dummyData/dummyATL";
 import {
   clearAssessmentDraft,
-  exportReportExcel,
   getAssessmentDraft,
   getAssessmentFilterState,
   getClasses,
@@ -49,30 +48,6 @@ const getLevelTone = (code) => {
   };
 };
 
-const exportColumns = [
-  { key: "no", label: "NO" },
-  { key: "className", label: "CLASS" },
-  { key: "nis", label: "NIS" },
-  { key: "name", label: "NAME" },
-  { key: "subject", label: "SUBJECT" },
-  { key: "subTopic", label: "SUB TOPIC" },
-  { key: "score", label: "FUZZY AHP SCORE" },
-  { key: "predikat", label: "GRADE / PREDIKAT" },
-  { key: "progress", label: "PROGRESS" },
-  { key: "thinking", label: "THINKING SKILLS" },
-  { key: "research", label: "RESEARCH SKILLS" },
-  { key: "communication", label: "COMMUNICATION SKILLS" },
-  { key: "social", label: "SOCIAL SKILLS" },
-  { key: "selfManagement", label: "SELF-MANAGEMENT SKILLS" },
-];
-
-const safeFilePart = (value) => String(value || "ATL").replace(/[^a-z0-9_-]+/gi, "_").replace(/^_+|_+$/g, "");
-
-const getCategoryExportValue = (student, categoryName) => {
-  const row = (student.atlCategoryScores || []).find((item) => item.name === categoryName);
-  return Number(row?.score) > 0 ? Number(row.score) : "-";
-};
-
 export default function DetailedInputATL() {
   const initialSubjectOptions = getSubjectData().map(subjectDisplayName).filter(Boolean);
   const [classOptions, setClassOptions] = useState([]);
@@ -88,8 +63,6 @@ export default function DetailedInputATL() {
   const [topicVersion, setTopicVersion] = useState(0);
   const [saveStatus, setSaveStatus] = useState(null);
   const [saveMessage, setSaveMessage] = useState("");
-  const [exporting, setExporting] = useState(false);
-  const [exportMessage, setExportMessage] = useState("");
   const [backendError, setBackendError] = useState("");
   const [backendStatus, setBackendStatus] = useState("idle");
   const [criteriaStatus, setCriteriaStatus] = useState("unknown");
@@ -113,7 +86,9 @@ export default function DetailedInputATL() {
   const students = useMemo(() => apiStudents, [apiStudents]);
   const criteria = dummyATL[dataKey] || [];
   const criterion = criteria[selectedCriterionIndex] || criteria[0] || null;
-  const isTopicReady = (topic) => Boolean(topic?.isAssessable || (topic?.id && (dummyATL[topic.id] || []).length > 0));
+  const isTopicReady = (topic) => Boolean(
+    topic?.id && topic?.isActive !== false
+  );
   const topicNeedsCriteria = Boolean(dataKey && !rubricLoading && !isTopicReady(selectedTopic) && criteria.length === 0);
   const isBackendUpdating = backendStatus === "loading" || rubricLoading;
   const assessmentUnavailableMessage = topicNeedsCriteria
@@ -541,20 +516,6 @@ export default function DetailedInputATL() {
     setSaveMessage("Nilai siap disimpan ke laporan.");
   };
 
-  const handleSaveDraft = () => {
-    if (!selectedStudent || !dataKey) return;
-    refreshCurrentAssessmentRef();
-    saveAssessmentDraft(selectedStudent.id, dataKey, ratings, {
-      note,
-      className: selectedClass,
-      subject: selectedSubject,
-      topicLabel: selectedTopic.label,
-    });
-    hasLocalChangesRef.current = false;
-    setSaveStatus("draft");
-    setSaveMessage("Draft tersimpan.");
-  };
-
   const handleSaveDefaultFilter = () => {
     saveAssessmentFilterState({
       className: selectedClass,
@@ -610,59 +571,6 @@ export default function DetailedInputATL() {
     return result;
   };
 
-  const handleExportExcel = async () => {
-    if (!selectedClass || !dataKey) return;
-    setExporting(true);
-    setExportMessage("Menyiapkan Excel dari nilai tersimpan...");
-    try {
-      const report = await getReport(selectedClass, dataKey);
-      const rows = (report.students || []).map((student, index) => ({
-        no: index + 1,
-        className: selectedClass,
-        nis: student.nis || student.id || "-",
-        name: student.name || "-",
-        subject: selectedSubject,
-        subTopic: selectedTopic.label,
-        score: Number.isFinite(Number(student.rawScore ?? student.score)) ? Number(Number(student.rawScore ?? student.score).toFixed(2)) : "-",
-        predikat: student.predikat || student.atlLevel?.label || "-",
-        progress: student.progress || "-",
-        thinking: getCategoryExportValue(student, "Thinking Skills"),
-        research: getCategoryExportValue(student, "Research Skills"),
-        communication: getCategoryExportValue(student, "Communication Skills"),
-        social: getCategoryExportValue(student, "Social Skills"),
-        selfManagement: getCategoryExportValue(student, "Self-Management Skills"),
-      }));
-      if (rows.length === 0) throw new Error("Belum ada nilai tersimpan untuk diexport.");
-
-      const filename = `ATL_Report_${safeFilePart(selectedClass)}_${safeFilePart(selectedSubject)}_${safeFilePart(selectedTopic.label)}.xlsx`;
-      const result = await exportReportExcel({
-        meta: {
-          className: selectedClass,
-          subject: selectedSubject,
-          subTopic: selectedTopic.label,
-          rowCount: rows.length,
-          generatedAt: new Date().toLocaleString("id-ID"),
-          filename,
-        },
-        columns: exportColumns,
-        rows,
-      });
-      const url = window.URL.createObjectURL(result.blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = result.filename || filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      setExportMessage(`Excel berhasil dibuat dari ${rows.length} siswa.`);
-    } catch (error) {
-      setExportMessage(error?.message || "Export Excel gagal.");
-    } finally {
-      setExporting(false);
-    }
-  };
-
   const progress = criteria.length ? Math.round((scoredCriteriaCount / criteria.length) * 100) : 0;
   const scoreCategory = getScoreCategory(calculatedScore);
   const saveStatusClass = {
@@ -705,6 +613,7 @@ export default function DetailedInputATL() {
                   </Link>
                 </div>
                 <button
+                  data-testid="assessment-save-button"
                   type="button"
                   onClick={handlePush}
                   disabled={!canPushAssessment}
@@ -738,7 +647,6 @@ export default function DetailedInputATL() {
                     Progress menunjukkan jumlah kriteria yang sudah dinilai. Gunakan <b>Simpan Default</b> untuk menyimpan pilihan kelas, mapel, topik, dan siswa saat ini sebagai tampilan awal.
                   </p>
                   {saveStatus && <p className={`mt-2 inline-flex rounded-lg px-2.5 py-1 text-[11px] font-black ${saveStatusClass}`}>{saveMessage}</p>}
-                  {exportMessage && <p className="mt-2 text-[11px] font-bold text-emerald-700">{exportMessage}</p>}
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-3">
@@ -760,11 +668,11 @@ export default function DetailedInputATL() {
           <div className="grid gap-5 rounded-2xl border border-stone-200 bg-white p-4 md:grid-cols-[320px_1fr]">
             <div className="space-y-3">
               <label className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Kelas</label>
-              <select value={selectedClass} onChange={(e) => handleClassChange(e.target.value)} className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-black">
+              <select data-testid="assessment-class-select" value={selectedClass} onChange={(e) => handleClassChange(e.target.value)} className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-black">
                 {classOptions.map((cls) => <option key={cls}>{cls}</option>)}
               </select>
               <label className="block text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Mata Pelajaran</label>
-              <select value={selectedSubject} onChange={(e) => handleSubjectChange(e.target.value)} className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-black text-red-600">
+              <select data-testid="assessment-subject-select" value={selectedSubject} onChange={(e) => handleSubjectChange(e.target.value)} className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-black text-red-600">
                 {subjectOptions.map((item) => <option key={item}>{item}</option>)}
               </select>
             </div>
@@ -776,6 +684,7 @@ export default function DetailedInputATL() {
                   return (
                     <span key={topic.id} className="group relative inline-flex">
                       <button
+                        data-testid={`assessment-topic-option-${topic.id}`}
                         onClick={() => handleTopicChange(index)}
                         disabled={disabled}
                         className={`rounded-xl px-5 py-3 text-sm font-black ${
@@ -840,7 +749,7 @@ export default function DetailedInputATL() {
                 ).toFixed(2);
                 const studentCategory = getScoreCategory(studentScore);
                 return (
-                  <button key={student.id} onClick={() => handleStudentChange(student)} className={`w-full rounded-xl border p-3 text-left transition ${active ? "border-primary bg-primary/5 shadow-md" : "border-stone-200 bg-white"}`}>
+                  <button data-testid={`assessment-student-option-${student.id}`} key={student.id} onClick={() => handleStudentChange(student)} className={`w-full rounded-xl border p-3 text-left transition ${active ? "border-primary bg-primary/5 shadow-md" : "border-stone-200 bg-white"}`}>
                     <div className="flex items-center gap-3">
                       <div className={`flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${student.avatarTone} text-xs font-black text-stone-900`}>{student.initials}</div>
                       <div className="min-w-0">
@@ -915,6 +824,7 @@ export default function DetailedInputATL() {
                     const active = criterionRating === option.label;
                     return (
                       <button
+                        data-testid={`rubric-item-${option.code}`}
                         key={option.code}
                         onClick={() => handleSelectRating(option.label)}
                         style={active ? { backgroundColor: tone.activeBg } : undefined}
@@ -935,6 +845,7 @@ export default function DetailedInputATL() {
                   <div className="rounded-2xl border border-stone-200 bg-white p-5">
                     <p className="text-[10px] font-black uppercase tracking-[0.22em] text-stone-500">Catatan Guru <span className="normal-case tracking-normal">(opsional)</span></p>
                     <textarea
+                      data-testid="assessment-teacher-note"
                       value={note}
                       onChange={(e) => {
                         const nextNote = e.target.value;

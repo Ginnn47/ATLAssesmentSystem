@@ -27,7 +27,7 @@ export default function Sidebar({ user }) {
     try {
       const cached = localStorage.getItem("atl_current_user");
       return cached ? normalizeUser(JSON.parse(cached)) : null;
-    } catch (error) {
+    } catch {
       return null;
     }
   };
@@ -81,7 +81,7 @@ export default function Sidebar({ user }) {
   const handleLogout = async () => {
     try {
       await logoutUser();
-    } catch (error) {
+    } catch {
       localStorage.removeItem("atl_current_user");
     }
     window.dispatchEvent(new Event("atl-auth-updated"));

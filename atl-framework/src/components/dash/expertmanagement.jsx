@@ -200,6 +200,7 @@ function ValidationSummaryCard({ validation, acknowledged, onAcknowledgedChange,
                 {requiresAcknowledgement && (
                   <label className="mt-6 flex items-start gap-3 border-t border-dashed border-amber-300 pt-5 text-sm font-semibold leading-6 text-stone-700">
                     <input
+                      data-testid="fuzzy-warning-acknowledgement"
                       type="checkbox"
                       checked={acknowledged}
                       onChange={(event) => onAcknowledgedChange(event.target.checked)}
@@ -287,13 +288,20 @@ const formatSavedActivityTime = (value) => {
   }).format(date);
 };
 
+const getPreferredSubject = (subjects = []) => (
+  subjects.find((subject) => subject.id === "singing")
+  || subjects.find((subject) => (subject.topics || []).length > 0)
+  || subjects[0]
+  || null
+);
 
 const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
   const initialSubjects = getSubjectData();
+  const initialSubject = getPreferredSubject(initialSubjects);
   const [subjectData, setSubjectData] = useState(initialSubjects);
   const [step, setStep] = useState(1);
-  const [selectedSubjectId, setSelectedSubjectId] = useState(initialSubjects[0]?.id || "");
-  const [selectedTopicId, setSelectedTopicId] = useState(initialSubjects[0]?.topics?.[0]?.id || "");
+  const [selectedSubjectId, setSelectedSubjectId] = useState(initialSubject?.id || "");
+  const [selectedTopicId, setSelectedTopicId] = useState(initialSubject?.topics?.[0]?.id || "");
 
   const [pairwise, setPairwise] = useState({});
   const [result, setResult] = useState(null);
@@ -319,11 +327,11 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
         const user = userResult.status === "fulfilled" ? userResult.value : null;
         const accessibleSubjects = filterSubjectsByUserAccess(subjects || getSubjectData(), user);
         setSubjectData(accessibleSubjects);
-        const firstSubject = accessibleSubjects?.[0];
-        setSelectedSubjectId((current) => accessibleSubjects.some((subject) => subject.id === current) ? current : firstSubject?.id || "");
+        const preferredSubject = getPreferredSubject(accessibleSubjects);
+        setSelectedSubjectId((current) => accessibleSubjects.some((subject) => subject.id === current) ? current : preferredSubject?.id || "");
         setSelectedTopicId((current) => {
           const availableTopics = accessibleSubjects.flatMap((subject) => subject.topics || []);
-          return availableTopics.some((topic) => topic.id === current) ? current : firstSubject?.topics?.[0]?.id || "";
+          return availableTopics.some((topic) => topic.id === current) ? current : preferredSubject?.topics?.[0]?.id || "";
         });
         if (topicsResult.status === "rejected") {
           setBackendError("Backend belum tersambung. Menampilkan data terakhir.");
@@ -935,6 +943,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     Mata Pelajaran <span className="material-symbols-outlined text-xs cursor-help" title="Mata pelajaran induk">info</span>
                   </label>
                   <select
+                    data-testid="weight-subject-select"
                     className="w-full rounded-2xl border-2 border-stone-100 bg-stone-50 px-4 py-4 font-bold text-stone-900 outline-none transition-all focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
                     value={selectedSubjectId}
                     onChange={(e) => {
@@ -949,6 +958,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-stone-500">Sub Topik</label>
                   <select
+                    data-testid="weight-topic-select"
                     className="w-full rounded-2xl border-2 border-stone-100 bg-stone-50 px-4 py-4 font-bold text-stone-900 outline-none transition-all focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
                     value={selectedTopicId}
                     onChange={(e) => setSelectedTopicId(e.target.value)}
@@ -987,7 +997,11 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                   </div>
                   <div className="divide-y divide-stone-200 bg-white">
                     {rubricPackages.map((pkg, packageIndex) => (
-                      <div key={pkg.key} className="grid gap-3 px-4 py-4 lg:grid-cols-[44px_minmax(180px,1fr)_110px_minmax(260px,1.7fr)_70px]">
+                      <div
+                        key={pkg.key}
+                        data-testid={`weight-criterion-package-${pkg.key}`}
+                        className="grid gap-3 px-4 py-4 lg:grid-cols-[44px_minmax(180px,1fr)_110px_minmax(260px,1.7fr)_70px]"
+                      >
                         <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-xs font-black text-primary">{packageIndex + 1}</span>
                         <div className="min-w-0">
                           <p className="truncate text-sm font-black text-stone-900">{pkg.title}</p>
@@ -1054,6 +1068,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
+                      data-testid="tfn-reset-button"
                       onClick={handleResetScaleOptions}
                       disabled={scaleSaving}
                       className="rounded-2xl border border-stone-200 bg-white px-4 py-2 text-xs font-black text-stone-600 transition hover:border-primary hover:text-primary disabled:opacity-40"
@@ -1062,6 +1077,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                     </button>
                     <button
                       type="button"
+                      data-testid="tfn-save-button"
                       onClick={handleSaveScaleOptions}
                       disabled={scaleSaving || scaleInvalid || !scaleDirty}
                       className="rounded-2xl bg-stone-950 px-5 py-2 text-xs font-black text-white shadow-lg shadow-stone-950/15 transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-40"
@@ -1102,6 +1118,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                             {[lower, middle, upper].map((value, index) => (
                               <td key={`${option.code}-${index}`} className="px-2 py-3 text-center">
                                 <input
+                                  data-testid={`tfn-${option.code}-${index === 0 ? "lower" : index === 1 ? "middle" : "upper"}-input`}
                                   type="number"
                                   min="0.01"
                                   step="0.01"
@@ -1180,6 +1197,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
                         const isActive = pairwise[pkg.key]?.[idx]?.scale === opt.label;
                         return (
                           <button
+                            data-testid={`pairwise-option-${packageIndex}-${idx}-${opt.code || opt.label.replace(/\s+/g, "-").toLowerCase()}`}
                             key={opt.label}
                             onClick={() => {
                               setPairwise({
@@ -1230,7 +1248,6 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
             const weightEntries = Object.entries(activePackage?.weights || {});
             const subskills = activePackage?.subskills || [];
             const matrix = activePackage?.debug?.matrix || [];
-            const consistency = Number(activePackage?.consistency || result?.consistency || 0);
             const rowSums = activePackage?.debug?.rowSums || [];
             const totalFuzzy = activePackage?.debug?.total || [];
             const syntheticExtents = activePackage?.debug?.S || [];
@@ -1866,6 +1883,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
 
           {step === 2 ? (
             <button
+              data-testid="fuzzy-process-button"
               onClick={calculateResult}
               disabled={calculatingWeights || rubricPackages.length === 0 || scaleDirty || scaleInvalid || !pairwiseComplete}
               className="flex items-center gap-2 rounded-2xl bg-stone-950 px-8 py-3 text-sm font-black text-white shadow-xl shadow-stone-950/20 transition-all hover:bg-stone-800 hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
@@ -1882,6 +1900,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
             </button>
           ) : (
             <button 
+              data-testid="fuzzy-save-weight-button"
               onClick={handleSaveToSystem}
               disabled={savingWeights || !canApplyWeight}
               className="flex items-center gap-2 rounded-2xl bg-primary px-8 py-3 text-sm font-black text-white shadow-xl shadow-primary/20 transition-all hover:bg-secondary hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"

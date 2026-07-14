@@ -257,6 +257,46 @@ def _teacher_monitoring(completion, total_context_records):
     return rows
 
 
+def _topic_assessment_progress(topics, all_students, assessments):
+    students = [student for class_students in all_students.values() for student in class_students]
+    student_class = {
+        str(student.get("id")): class_name
+        for class_name, class_students in all_students.items()
+        for student in class_students
+    }
+    class_totals = {class_name: len(class_students) for class_name, class_students in all_students.items()}
+    rows = []
+    for topic in topics:
+        assessed_student_ids = set()
+        relevant_classes = set()
+        for student in students:
+            student_id = str(student.get("id"))
+            ratings = (assessments.get(student_id, {}) or {}).get(topic.code, {})
+            if ratings:
+                assessed_student_ids.add(student_id)
+                if student_class.get(student_id):
+                    relevant_classes.add(student_class[student_id])
+        if not relevant_classes:
+            continue
+        total_students = sum(class_totals.get(class_name, 0) for class_name in relevant_classes)
+        assessed = len(assessed_student_ids)
+        unassessed = max(0, total_students - assessed)
+        rows.append(
+            {
+                "topicId": topic.code,
+                "topicLabel": topic.label,
+                "subjectCode": topic.subject.code if topic.subject else "",
+                "subjectLabel": topic.subject.label if topic.subject else "Subject",
+                "assessedStudents": assessed,
+                "unassessedStudents": unassessed,
+                "totalStudents": total_students,
+                "classScope": sorted(relevant_classes),
+                "progress": round((assessed / total_students) * 100) if total_students else 0,
+            }
+        )
+    return sorted(rows, key=lambda item: (-item["progress"], item["subjectLabel"], item["topicLabel"]))
+
+
 def _recent_activities(topic_lookup, all_students, weights_by_topic, assessment_events):
     now = timezone.now()
     recent = []
@@ -493,6 +533,7 @@ def _build_dashboard_payload(topics, contexts, weights_by_topic, assessments, as
         "classComparison": class_rows,
         "attentionStudents": attention_students,
         "teacherMonitoring": _teacher_monitoring(completion, context_record_count),
+        "topicAssessmentProgress": _topic_assessment_progress(topics, all_students, assessments),
         "recentActivities": _recent_activities(topic_lookup, all_students, weights_by_topic, assessment_events),
         "workflow": DASHBOARD_WORKFLOW,
         "documents": DASHBOARD_DOCUMENTS,
