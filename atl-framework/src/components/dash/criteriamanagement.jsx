@@ -23,8 +23,8 @@ export default function CriteriaManagement() {
     math: { icon: "calculate", bgColor: "bg-amber-50", borderColor: "border-amber-200", textColor: "text-amber-700", badgeColor: "bg-amber-100 text-amber-700", accentBorder: "border-amber-300" },
   };
 
-  const buildSubjects = (user = currentUser) =>
-    filterSubjectsByUserAccess(getSubjectData(), user).map((subject) => ({
+  const buildSubjects = (user = currentUser, sourceSubjects = getSubjectData()) =>
+    filterSubjectsByUserAccess(sourceSubjects, user).map((subject) => ({
       ...subject,
       ...(subjectStyles[subject.id] || subjectStyles.singing),
     }));
@@ -36,6 +36,8 @@ export default function CriteriaManagement() {
   const [selectedSubtopic, setSelectedSubtopic] = useState("singing_christmas_carol");
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
+  const [editingCriterionId, setEditingCriterionId] = useState("");
+  const [savingCriteria, setSavingCriteria] = useState(false);
   const [, setDataVersion] = useState(0);
   const [atlHierarchy, setAtlHierarchy] = useState([]);
   const [backendError, setBackendError] = useState("");
@@ -178,7 +180,33 @@ export default function CriteriaManagement() {
   const persistATLChanges = () => {
     saveATLData(dummyATL);
     setDataVersion((v) => v + 1);
+    window.dispatchEvent(new Event("atl-criteria-updated"));
+    window.dispatchEvent(new Event("atl-weights-updated"));
     window.dispatchEvent(new Event("atl-data-updated"));
+  };
+
+  const recordCriteriaWeightNotice = ({ action, topicId, criterionName }) => {
+    const subject = subjects.find((item) => (item.topics || []).some((topic) => topic.id === topicId));
+    const topic = subject?.topics?.find((item) => item.id === topicId);
+    const actionLabel = action === "delete"
+      ? "Penghapusan"
+      : action === "edit"
+        ? "Perubahan"
+        : "Penambahan";
+    dummyATL.criteriaChangeActivities = [
+      {
+        id: `${topicId}-${Date.now()}`,
+        type: "criteria-change",
+        action,
+        topicId,
+        topicLabel: topic?.label || topicId,
+        subjectLabel: subject?.label || selectedSubject,
+        criterionName: criterionName || "Kriteria ATL",
+        savedAt: new Date().toISOString(),
+        message: `${actionLabel} kriteria ${criterionName || "ATL"} membuat pembobotan perlu diperbarui.`,
+      },
+      ...(dummyATL.criteriaChangeActivities || []),
+    ].slice(0, 8);
   };
 
   const applyCriteriaResult = (topicId, criteria = []) => {
@@ -195,8 +223,8 @@ export default function CriteriaManagement() {
   };
 
   const refreshSelectedSubtopicFromBackend = async (topicId = selectedSubtopic) => {
-    await getTopics();
-    const nextSubjects = buildSubjects(currentUser);
+    const latestSubjects = await getTopics();
+    const nextSubjects = buildSubjects(currentUser, latestSubjects);
     setSubjects(nextSubjects);
     if (topicId) {
       const criteria = await getCriteria(topicId);
@@ -217,8 +245,9 @@ export default function CriteriaManagement() {
     Promise.allSettled([getTopics(), getCurrentUser()])
       .then(([topicsResult, userResult]) => {
         const user = userResult.status === "fulfilled" ? userResult.value : null;
+        const topicSource = topicsResult.status === "fulfilled" ? topicsResult.value : getSubjectData();
         setCurrentUser(user);
-        const nextSubjects = buildSubjects(user);
+        const nextSubjects = buildSubjects(user, topicSource);
         setSubjects(nextSubjects);
         const topicIds = nextSubjects.flatMap((subject) => (subject.topics || []).map((topic) => topic.id));
         const activeSubtopic = selectedSubtopicRef.current;
@@ -451,8 +480,10 @@ export default function CriteriaManagement() {
   };
 
   const handleAddCriteria = async () => {
+    if (savingCriteria) return;
     const activeTopicId = selectedSubtopic;
     const activeSubjectId = selectedSubject;
+    const wasEditing = editingIndex !== null;
     const chosenSubskills = selectedSubskills.length > 0 ? selectedSubskills : selectedCategorySubskills;
     const chosenCategory = chosenSubskills.length > 0 ? findCategoryForSubskill(chosenSubskills[0].id) : selectedCategory;
     const chosenCategories = chosenCategory ? [chosenCategory] : [];
@@ -468,6 +499,7 @@ export default function CriteriaManagement() {
       return;
     }
 
+    setSavingCriteria(true);
     const normalizedFormData = {
       criteriaTopic: formData.criteriaTopic.trim(),
       kriteria: formData.kriteria.trim(),
@@ -481,82 +513,91 @@ export default function CriteriaManagement() {
       levels: { ...formData.levels },
     };
 
-    if (editingIndex !== null) {
-      const previousCriterion = dummyATL[activeTopicId][editingIndex];
-      let savedCriterion = null;
-      try {
-        savedCriterion = await updateCriterion(previousCriterion.id, normalizedFormData);
-      } catch (error) {
-        alert(error.message || "Gagal menyimpan perubahan kriteria ke backend.");
-        return;
+    try {
+      if (wasEditing) {
+        const rows = dummyATL[activeTopicId] || [];
+        const previousIndex = rows.findIndex((criterion) => String(criterion.id) === String(editingCriterionId));
+        const previousCriterion = rows[previousIndex];
+        if (!previousCriterion) {
+          alert("Kriteria yang diedit tidak ditemukan. Muat ulang data kriteria lalu coba lagi.");
+          return;
+        }
+        const savedCriterion = await updateCriterion(previousCriterion.id, normalizedFormData);
+        if (!savedCriterion?.id) throw new Error("Gagal menyimpan perubahan kriteria ke backend.");
+        dummyATL[activeTopicId][previousIndex] = {
+          ...normalizedFormData,
+          id: savedCriterion.id,
+          criterionId: savedCriterion.criterionId || normalizedFormData.criterionId,
+          rubricItemId: savedCriterion.rubricItemId || normalizedFormData.rubricItemId,
+          category: savedCriterion.category || normalizedFormData.category,
+          atlCategories: savedCriterion.atlCategories || normalizedFormData.atlCategories,
+          atl: savedCriterion.atl || normalizedFormData.atl,
+          subskillId: savedCriterion.subskillId || normalizedFormData.subskillId,
+          subskillIds: savedCriterion.subskillIds || normalizedFormData.subskillIds,
+          criteriaTopic: savedCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
+        };
+        syncCriterionReferences(activeTopicId, previousCriterion, dummyATL[activeTopicId][previousIndex]);
+        recordCriteriaWeightNotice({
+          action: "edit",
+          topicId: activeTopicId,
+          criterionName: normalizedFormData.kriteria,
+        });
+      } else {
+        const createdCriterion = await createCriterion(activeTopicId, normalizedFormData);
+        if (!createdCriterion?.id) throw new Error("Gagal menyimpan kriteria baru ke backend.");
+        if (!dummyATL[activeTopicId]) dummyATL[activeTopicId] = [];
+        dummyATL[activeTopicId].push({
+          ...normalizedFormData,
+          id: createdCriterion.id,
+          criterionId: createdCriterion.criterionId || normalizedFormData.criterionId,
+          rubricItemId: createdCriterion.rubricItemId || normalizedFormData.rubricItemId,
+          category: createdCriterion.category || normalizedFormData.category,
+          atlCategories: createdCriterion.atlCategories || normalizedFormData.atlCategories,
+          atl: createdCriterion.atl || normalizedFormData.atl,
+          subskillId: createdCriterion.subskillId || normalizedFormData.subskillId,
+          subskillIds: createdCriterion.subskillIds || normalizedFormData.subskillIds,
+          criteriaTopic: createdCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
+        });
+        recordCriteriaWeightNotice({
+          action: "create",
+          topicId: activeTopicId,
+          criterionName: normalizedFormData.kriteria,
+        });
       }
-      if (!savedCriterion?.id) {
-        alert("Gagal menyimpan perubahan kriteria ke backend.");
-        return;
-      }
-      dummyATL[activeTopicId][editingIndex] = {
-        ...normalizedFormData,
-        id: savedCriterion.id,
-        category: savedCriterion.category || normalizedFormData.category,
-        atlCategories: savedCriterion.atlCategories || normalizedFormData.atlCategories,
-        atl: savedCriterion.atl || normalizedFormData.atl,
-        subskillId: savedCriterion.subskillId || normalizedFormData.subskillId,
-        subskillIds: savedCriterion.subskillIds || normalizedFormData.subskillIds,
-        criteriaTopic: savedCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
-      };
-      syncCriterionReferences(activeTopicId, previousCriterion, dummyATL[activeTopicId][editingIndex]);
-      setEditingIndex(null);
-    } else {
-      let createdCriterion = null;
-      try {
-        createdCriterion = await createCriterion(activeTopicId, normalizedFormData);
-      } catch (error) {
-        alert(error.message || "Gagal menyimpan kriteria baru ke backend.");
-        return;
-      }
-      if (!createdCriterion?.id) {
-        alert("Gagal menyimpan kriteria baru ke backend.");
-        return;
-      }
-      if (!dummyATL[activeTopicId]) dummyATL[activeTopicId] = [];
-      dummyATL[activeTopicId].push({
-        ...normalizedFormData,
-        id: createdCriterion.id,
-        category: createdCriterion.category || normalizedFormData.category,
-        atlCategories: createdCriterion.atlCategories || normalizedFormData.atlCategories,
-        atl: createdCriterion.atl || normalizedFormData.atl,
-        subskillId: createdCriterion.subskillId || normalizedFormData.subskillId,
-        subskillIds: createdCriterion.subskillIds || normalizedFormData.subskillIds,
-        criteriaTopic: createdCriterion.criteriaTopic || normalizedFormData.criteriaTopic,
+
+      persistATLChanges();
+      setSelectedSubject(activeSubjectId);
+      setSelectedSubtopic(activeTopicId);
+      await refreshSelectedSubtopicFromBackend(activeTopicId);
+      setSelectedSubject(activeSubjectId);
+      setSelectedSubtopic(activeTopicId);
+
+      setFormData({
+        kriteria: "",
+        criteriaTopic: "",
+        atl: selectedSubskills.map((subskill) => subskill.name),
+        categoryId: selectedCategory?.id || "",
+        categoryIds: formData.categoryIds || [],
+        categoryName: selectedCategory?.name || "",
+        subskillId: selectedSubskill?.id || "",
+        subskillIds: formData.subskillIds || [],
+        subskillName: selectedSubskill?.name || "",
+        levels: {
+          NFI: "",
+          PTE: "",
+          DE: "",
+          ME: "",
+          EE: "",
+        },
       });
+      setShowAddForm(false);
+      setEditingIndex(null);
+      setEditingCriterionId("");
+    } catch (error) {
+      alert(error.message || (wasEditing ? "Gagal menyimpan perubahan kriteria ke backend." : "Gagal menyimpan kriteria baru ke backend."));
+    } finally {
+      setSavingCriteria(false);
     }
-
-    persistATLChanges();
-    setSelectedSubject(activeSubjectId);
-    setSelectedSubtopic(activeTopicId);
-    await refreshSelectedSubtopicFromBackend(activeTopicId);
-    setSelectedSubject(activeSubjectId);
-    setSelectedSubtopic(activeTopicId);
-
-    setFormData({
-      kriteria: "",
-      criteriaTopic: "",
-      atl: selectedSubskills.map((subskill) => subskill.name),
-      categoryId: selectedCategory?.id || "",
-      categoryIds: formData.categoryIds || [],
-      categoryName: selectedCategory?.name || "",
-      subskillId: selectedSubskill?.id || "",
-      subskillIds: formData.subskillIds || [],
-      subskillName: selectedSubskill?.name || "",
-      levels: {
-        NFI: "",
-        PTE: "",
-        DE: "",
-        ME: "",
-        EE: "",
-      },
-    });
-    setShowAddForm(false);
   };
 
   const handleEditCriteria = (index) => {
@@ -589,6 +630,7 @@ export default function CriteriaManagement() {
       levels: { ...existing.levels },
     });
     setEditingIndex(index);
+    setEditingCriterionId(String(existing.id || ""));
     setShowAddForm(true);
   };
 
@@ -608,6 +650,11 @@ export default function CriteriaManagement() {
       }
       dummyATL[selectedSubtopic].splice(index, 1);
       removeCriterionReferences(selectedSubtopic, deletedCriterion);
+      recordCriteriaWeightNotice({
+        action: "delete",
+        topicId: selectedSubtopic,
+        criterionName: deletedCriterion?.kriteria,
+      });
       persistATLChanges();
       await refreshSelectedSubtopicFromBackend(selectedSubtopic);
     }
@@ -616,6 +663,7 @@ export default function CriteriaManagement() {
   const handleCancel = () => {
     setShowAddForm(false);
     setEditingIndex(null);
+    setEditingCriterionId("");
     setFormData({
       kriteria: "",
       criteriaTopic: "",
@@ -1045,12 +1093,13 @@ export default function CriteriaManagement() {
               <button
                 data-testid="criteria-save-button"
                 onClick={handleAddCriteria}
-                className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-primary-hover"
+                disabled={savingCriteria}
+                className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <span className="material-symbols-outlined">
-                  {editingIndex !== null ? "save_as" : "save"}
+                <span className={`material-symbols-outlined ${savingCriteria ? "animate-spin" : ""}`}>
+                  {savingCriteria ? "sync" : editingIndex !== null ? "save_as" : "save"}
                 </span>
-                {editingIndex !== null ? "Simpan Perubahan" : "Simpan Kriteria"}
+                {savingCriteria ? "Menyimpan..." : editingIndex !== null ? "Simpan Perubahan" : "Simpan Kriteria"}
               </button>
               <button
                 onClick={handleCancel}

@@ -37,6 +37,26 @@ const normalizeRatingLabel = (label) =>
 
 const getScoreCategory = getScoreLevel;
 
+const formatWeightScaleInfo = (updatedAt, source) => {
+  const fallbackDefault = "2027-07-02T10:47:00+07:00";
+  const targetDate = updatedAt || (source === "equal-fallback" ? fallbackDefault : "");
+  if (!targetDate) return "Belum ada bobot";
+  const date = new Date(targetDate);
+  if (Number.isNaN(date.getTime())) return "Tanggal bobot tidak tersedia";
+  const day = new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(date);
+  const time = new Intl.DateTimeFormat("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Jakarta",
+  }).format(date).replace(/\./g, ":");
+  return `${day} ${time} WIB`;
+};
+
 const buildSubjectTopicMap = (subjects, user) =>
   filterSubjectsByUserAccess(subjects, user).reduce((acc, subject) => {
     const label = subjectDisplayName(subject);
@@ -64,6 +84,7 @@ export default function BatchInputATL() {
   const [backendStatus, setBackendStatus] = useState("idle");
   const [criteriaStatus, setCriteriaStatus] = useState("unknown");
   const [backendReportRows, setBackendReportRows] = useState([]);
+  const [weightInfo, setWeightInfo] = useState({ updatedAt: "", source: "" });
   const [previewScores, setPreviewScores] = useState({});
   const [previewContextKey, setPreviewContextKey] = useState("");
   const [previewingScores, setPreviewingScores] = useState(false);
@@ -117,6 +138,7 @@ export default function BatchInputATL() {
   const selectedTopic = topicOptions[selectedTopicIndex] || { id: "", label: "Pilih Topik" };
   const dataKey = selectedTopic.id;
   const currentATLData = dummyATL[dataKey] || [];
+  const weightScaleLabel = formatWeightScaleInfo(weightInfo.updatedAt || dummyATL.savedWeights?.[dataKey]?.__savedAt, weightInfo.source);
   const topicNeedsCriteria = Boolean(dataKey && selectedTopic.isAssessable === false && currentATLData.length === 0 && criteriaStatus !== "loading");
   const isBackendUpdating = backendStatus === "loading";
   const assessmentUnavailableMessage = topicNeedsCriteria
@@ -198,7 +220,10 @@ export default function BatchInputATL() {
   }, [selectedClass]);
 
   useEffect(() => {
-    if (!dataKey) return undefined;
+    if (!dataKey) {
+      setWeightInfo({ updatedAt: "", source: "" });
+      return undefined;
+    }
     let cancelled = false;
     setBackendStatus("loading");
     setCriteriaStatus(currentATLData.length > 0 ? "available" : "loading");
@@ -212,6 +237,10 @@ export default function BatchInputATL() {
             setBackendStatus("ready");
             setBackendError("");
           }
+          setWeightInfo({
+            updatedAt: result?.flow?.weightUpdatedAt || result?.weights?.__savedAt || "",
+            source: result?.flow?.weightSource || "",
+          });
           const nextCriteriaCount = result?.criteria?.length ?? (dummyATL[dataKey] || []).length;
           setCriteriaStatus(nextCriteriaCount > 0 ? "available" : "empty");
           setDataVersion((version) => version + 1);
@@ -222,6 +251,10 @@ export default function BatchInputATL() {
           setBackendStatus("failed");
           setBackendError(error.message || "Data backend belum tersambung. Menampilkan data terakhir.");
           setCriteriaStatus((dummyATL[dataKey] || []).length > 0 ? "available" : "empty");
+          setWeightInfo({
+            updatedAt: dummyATL.savedWeights?.[dataKey]?.__savedAt || "",
+            source: dummyATL.savedWeights?.[dataKey] ? "cached" : "",
+          });
           setDataVersion((version) => version + 1);
         }
       });
@@ -900,8 +933,11 @@ export default function BatchInputATL() {
                     </div>
 
                     <div className="rounded-2xl border border-primary/30 bg-primary/10 p-4">
-                      <p className="text-[11px] font-black uppercase tracking-[0.14em] text-stone-600">Status Cell</p>
-                      <p className="mt-2 text-xl font-black text-stone-900">{detailOption ? "Sudah dinilai" : "Belum dinilai"}</p>
+                      <p className="text-[11px] font-black uppercase tracking-[0.14em] text-stone-600">Skala Digunakan</p>
+                      <p className="mt-2 text-xl font-black text-stone-900">{weightScaleLabel}</p>
+                      <p className="mt-1 text-[11px] font-semibold leading-5 text-stone-500">
+                        Identitas bobot Fuzzy-AHP yang dipakai saat nilai ini masuk ke perhitungan report.
+                      </p>
                     </div>
 
                     <div>

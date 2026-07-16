@@ -6,7 +6,7 @@ const apiBaseUrl = configuredApiUrl || "/api/";
 const api = axios.create({
   baseURL: apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`,
   withCredentials: true,
-  timeout: 10000,
+  timeout: 30000,
 });
 
 export default api;

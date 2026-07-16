@@ -12,6 +12,7 @@ from .models import (
     ContextRubricItem,
     ContextWeightSnapshot,
     ATLSubskill,
+    Criterion,
     FuzzyWeight,
     LearningContext,
     RubricScale,
@@ -361,9 +362,10 @@ class AssessmentSyncTests(TestCase):
     def setUp(self):
         ensure_contextual_seed()
         self.user = User.objects.create_user(username="teacher", password="atl12345")
-        UserProfile.objects.create(user=self.user, role_label="PJ Mapel", role_group="PJ Mapel", status="Aktif")
+        self.profile = UserProfile.objects.create(user=self.user, role_label="PJ Mapel", role_group="PJ Mapel", status="Aktif")
         self.client.force_login(self.user)
         self.subject, _ = Subject.objects.get_or_create(code="singing", defaults={"label": "Singing"})
+        self.profile.subject_access.set([self.subject])
         self.topic, _ = Topic.objects.get_or_create(
             subject=self.subject,
             code="singing_christmas_carol",
@@ -575,6 +577,110 @@ class AssessmentSyncTests(TestCase):
 
         self.assertIn(response.status_code, [401, 403])
 
+    def test_criterion_update_persists_multiple_same_category_subskills_to_context(self):
+        thinking_subskills = list(
+            ATLSubskill.objects.filter(category__name="Thinking Skills")
+            .select_related("category")
+            .order_by("order", "name")[:2]
+        )
+        self.assertEqual(len(thinking_subskills), 2)
+        criterion = Criterion.objects.create(
+            topic=self.topic,
+            name="Thinking Multi Skill",
+            atl=[thinking_subskills[0].name],
+            levels={
+                "NFI": "Belum terlihat.",
+                "PTE": "Mulai terlihat.",
+                "DE": "Berkembang.",
+                "ME": "Memenuhi.",
+                "EE": "Melebihi.",
+            },
+            order=77,
+        )
+        payload = {
+            "criteriaTopic": "Vocal Technique",
+            "kriteria": criterion.name,
+            "atl": [item.name for item in thinking_subskills],
+            "atlCategories": ["Thinking Skills"],
+            "subskillIds": [item.id for item in thinking_subskills],
+            "levels": {
+                "NFI": "Belum terlihat.",
+                "PTE": "Mulai terlihat.",
+                "DE": "Berkembang.",
+                "ME": "Memenuhi.",
+                "EE": "Melebihi.",
+            },
+        }
+
+        response = self.client.put(
+            f"/api/criteria/{criterion.id}/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        criterion.refresh_from_db()
+        expected_names = [item.name for item in thinking_subskills]
+        self.assertEqual(criterion.atl, expected_names)
+        rubric_item = ContextRubricItem.objects.get(context=self.context, title=criterion.name)
+        self.assertEqual(
+            [item.name for item in rubric_item.subskills.order_by("order", "name")],
+            expected_names,
+        )
+        self.assertEqual(response.json()["criterion"]["atl"], expected_names)
+        self.assertEqual(response.json()["criterion"]["subskillIds"], [item.id for item in thinking_subskills])
+
+    def test_context_criterion_update_uses_typed_id_without_creating_duplicate(self):
+        rubric_item = self.context.rubric_items.prefetch_related("subskills").first()
+        old_count = ContextRubricItem.objects.filter(context=self.context, title=rubric_item.title).count()
+        thinking_subskills = list(
+            ATLSubskill.objects.filter(category__name="Thinking Skills")
+            .select_related("category")
+            .order_by("order", "name")[:2]
+        )
+        payload = {
+            "criteriaTopic": rubric_item.criteria_topic or "Vocal Technique",
+            "kriteria": rubric_item.title,
+            "atl": [item.name for item in thinking_subskills],
+            "atlCategories": ["Thinking Skills"],
+            "subskillIds": [item.id for item in thinking_subskills],
+            "levels": {
+                "NFI": "Tidak mampu mengikuti pitch setelah perubahan edit.",
+                "PTE": "Mulai terlihat.",
+                "DE": "Berkembang.",
+                "ME": "Memenuhi.",
+                "EE": "Melebihi.",
+            },
+        }
+
+        response = self.client.put(
+            f"/api/criteria/context:{rubric_item.id}/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        rubric_item.refresh_from_db()
+        self.assertEqual(ContextRubricItem.objects.filter(context=self.context, title=rubric_item.title).count(), old_count)
+        self.assertEqual(
+            [item.name for item in rubric_item.subskills.order_by("order", "name")],
+            [item.name for item in thinking_subskills],
+        )
+        legacy = Criterion.objects.get(topic=self.topic, name=rubric_item.title)
+        self.assertEqual(legacy.atl, [item.name for item in thinking_subskills])
+        self.assertEqual(response.json()["criterion"]["id"], f"context:{rubric_item.id}")
+        self.assertEqual(rubric_item.level_descriptors["NFI"], "Tidak mampu mengikuti pitch setelah perubahan edit.")
+
+        ensure_contextual_seed()
+        flow_response = self.client.get("/api/contexts/singing_christmas_carol/flow/")
+        flow_item = next(item for item in flow_response.json()["rubricItems"] if item["id"] == rubric_item.id)
+
+        self.assertEqual(flow_item["levelDescriptors"]["NFI"], "Tidak mampu mengikuti pitch setelah perubahan edit.")
+        self.assertEqual(
+            [item["name"] for item in flow_item["subskills"]],
+            [item.name for item in thinking_subskills],
+        )
+
     def test_report_with_configured_criteria_returns_no_data_before_assessment(self):
         response = self.client.get(
             "/api/reports/",
@@ -686,6 +792,40 @@ class WeightPersistenceTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+
+    def test_context_weight_save_allows_manual_acknowledgement_override(self):
+        rubric_item = self.context.rubric_items.get(title="Role Play & Musical Contribution")
+        subskills = [item.name for item in rubric_item.subskills.all()]
+        package_key = f"rubric-{rubric_item.id}"
+        response = self.client.post(
+            "/api/contexts/singing_christmas_carol/weights/calculate/",
+            data=json.dumps(
+                {
+                    "persist": True,
+                    "pairwise": {
+                        "__criterionPackages": True,
+                        "validationAcknowledged": True,
+                        "savedAt": "2026-07-17T10:00:00+07:00",
+                        "packages": {
+                            package_key: {
+                                "title": rubric_item.title,
+                                "subskills": subskills,
+                                "pairwise": [
+                                    {"left": left, "right": right, "scale": "Skala Manual Tidak Standar"}
+                                    for left, right in combinations(subskills, 2)
+                                ],
+                            }
+                        },
+                    },
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["validation"]["canApplyWeight"])
+        self.assertTrue(ContextWeightSnapshot.objects.filter(context=self.context).exists())
+        self.assertTrue(FuzzyWeight.objects.filter(topic=self.topic).exists())
 
     def test_pairwise_scale_can_be_edited_per_context(self):
         response = self.client.put(

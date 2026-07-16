@@ -27,6 +27,7 @@ const ASSESSMENT_DRAFT_STORAGE_KEY = "atl_assessment_drafts";
 const ASSESSMENT_LIVE_DRAFT_STORAGE_KEY = "atl_assessment_live_drafts";
 const ASSESSMENT_FILTER_STORAGE_KEY = "atl_assessment_filter_state";
 const REPORT_DIRTY_STORAGE_KEY = "atl_report_data_dirty_at";
+const BACKEND_SAVE_AUDIT_KEY = "atl_backend_save_audit";
 const CLASS_CACHE_STORAGE_KEY = "atl_class_catalog_snapshot";
 const STUDENT_CACHE_STORAGE_KEY = "atl_student_catalog_snapshot";
 const apiErrorMessage = (error, fallback) => (
@@ -112,6 +113,26 @@ const markReportDataDirty = () => {
     localStorage.setItem(REPORT_DIRTY_STORAGE_KEY, new Date().toISOString());
   } catch {
     // Assessment sync must remain successful even if browser storage is unavailable.
+  }
+};
+
+const recordBackendSaveAudit = (entry = {}) => {
+  const auditEntry = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    at: new Date().toISOString(),
+    ...entry,
+  };
+  try {
+    const previous = JSON.parse(localStorage.getItem(BACKEND_SAVE_AUDIT_KEY) || "[]");
+    const rows = Array.isArray(previous) ? previous : [];
+    localStorage.setItem(BACKEND_SAVE_AUDIT_KEY, JSON.stringify([auditEntry, ...rows].slice(0, 20)));
+  } catch {
+    // Debug audit must never block the save flow.
+  }
+  if (entry.success) {
+    console.info("[ATL backend save]", auditEntry);
+  } else {
+    console.warn("[ATL backend save failed]", auditEntry);
   }
 };
 
@@ -345,38 +366,48 @@ const normalizeClassAnalyticsPayload = (data) => {
 };
 
 export const mergeTopicCriteria = (topicId, criteria) => {
-  if (Array.isArray(criteria) && criteria.length > 0) {
-    const current = dummyATL[topicId] || [];
-    const merged = [...current];
+  if (Array.isArray(criteria)) {
+    const seen = new Set();
+    const rows = [];
     criteria.forEach((item) => {
-      const normalized = {
-        id: item.id,
-        criteriaTopic: item.criteriaTopic,
-        kriteria: item.kriteria || item.name,
-        atl: item.atl || [],
-        levels: item.levels || {},
-        category: item.category,
-        atlCategories: item.atlCategories || [],
-        subskillIds: item.subskillIds || [],
-        subskillId: item.subskillId,
-      };
-      const index = merged.findIndex((existing) => (
-        (normalized.id && existing.id === normalized.id) ||
-        (!normalized.id && existing.kriteria === normalized.kriteria) ||
-        (normalized.id && existing.kriteria === normalized.kriteria)
-      ));
-      if (index >= 0) merged[index] = { ...merged[index], ...normalized };
-      else merged.push(normalized);
+      const normalized = normalizeCriterionRow(item);
+      const key = normalized.id || normalized.kriteria;
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      rows.push(normalized);
     });
-    dummyATL[topicId] = merged;
+    dummyATL[topicId] = rows;
     saveATLData(dummyATL);
   }
   return dummyATL[topicId] || [];
 };
 
+const normalizeCriterionId = (id, source = "") => {
+  if (!id) return "";
+  const value = String(id);
+  if (value.includes(":")) return value;
+  return source === "context" ? `context:${value}` : `criterion:${value}`;
+};
+
+const normalizeCriterionRow = (item = {}, source = "") => ({
+  id: normalizeCriterionId(item.id, source),
+  criterionId: item.criterionId || "",
+  rubricItemId: item.rubricItemId || "",
+  criteriaTopic: item.criteriaTopic || "",
+  kriteria: item.kriteria || item.name || item.title || "",
+  atl: item.atl || [],
+  levels: item.levels || item.levelDescriptors || {},
+  category: item.category,
+  atlCategories: item.atlCategories || [],
+  subskillIds: item.subskillIds || [],
+  subskillId: item.subskillId,
+  subskillName: item.subskillName || "",
+});
+
 const contextCriteriaFromFlow = (flow) => (
   (flow?.rubricItems || []).map((item) => ({
-    id: item.id,
+    id: normalizeCriterionId(item.id, "context"),
+    rubricItemId: item.id,
     criteriaTopic: item.criteriaTopic,
     kriteria: item.title,
     atl: Array.isArray(item.subskills) && item.subskills.length > 0
@@ -390,27 +421,21 @@ const contextCriteriaFromFlow = (flow) => (
   }))
 );
 
-const criterionFromRubricItem = (item) => ({
-  id: item.id,
-  criteriaTopic: item.criteriaTopic,
-  kriteria: item.title,
-  atl: Array.isArray(item.subskills) && item.subskills.length > 0
-    ? item.subskills.map((subskill) => subskill.name)
-    : item.subskill?.name ? [item.subskill.name] : [],
-  levels: item.levelDescriptors || {},
-  atlCategories: Array.isArray(item.categories) ? item.categories.map((category) => category.name) : [],
-  subskillIds: Array.isArray(item.subskills) ? item.subskills.map((subskill) => subskill.id) : [],
-  subskillId: item.subskill?.id,
-  category: Array.isArray(item.categories) ? item.categories.map((category) => category.name).join(", ") : item.subskill?.category?.name,
-});
-
 export const getContextFlow = async (topicId) => {
   const data = unwrap(await requestWithRetry(() => api.get(`contexts/${topicId}/flow/`)));
   const criteria = contextCriteriaFromFlow(data);
   const weights = data.weights && Object.keys(data.weights).length > 0
     ? data.debug?.packages
-      ? { ...data.weights, __mode: "criterion-packages", packages: data.debug.packages }
-      : data.weights
+      ? {
+          ...data.weights,
+          __mode: "criterion-packages",
+          __savedAt: data.weights.__savedAt || data.weightUpdatedAt,
+          packages: data.debug.packages,
+        }
+      : {
+          ...data.weights,
+          __savedAt: data.weights.__savedAt || data.weightUpdatedAt,
+        }
     : {};
   if (criteria.length > 0) mergeTopicCriteria(topicId, criteria);
   if (Object.keys(weights).length > 0) mergeTopicWeights(topicId, weights);
@@ -453,10 +478,13 @@ const normalizeWeightPayload = (data = {}) => {
     return {
       ...weights,
       __mode: weights.__mode || "criterion-packages",
+      __savedAt: weights.__savedAt || data.savedAt || data.weightUpdatedAt,
       packages,
     };
   }
-  return weights;
+  return data.savedAt || data.weightUpdatedAt
+    ? { ...weights, __savedAt: weights.__savedAt || data.savedAt || data.weightUpdatedAt }
+    : weights;
 };
 
 export const mergeAssessments = (assessments) => {
@@ -596,22 +624,11 @@ export const getCriteria = async (topicId) => {
 };
 
 export const createCriterion = async (topicId, criterion) => {
-  let primaryError = null;
   try {
-    const data = unwrap(await requestWithRetry(() => api.post(`topics/${topicId}/criteria/`, criterion), { attempts: 3, delay: 500 }));
+    const data = unwrap(await api.post(`topics/${topicId}/criteria/`, criterion));
     return data.criterion || null;
   } catch (error) {
-    primaryError = error;
-    try {
-      const data = unwrap(await api.post(`contexts/${topicId}/rubric-items/`, {
-        ...criterion,
-        title: criterion.kriteria,
-        levelDescriptors: criterion.levels,
-      }));
-      return data.rubricItem ? criterionFromRubricItem(data.rubricItem) : null;
-    } catch (fallbackError) {
-      raiseApiError(fallbackError || primaryError, "Gagal menyimpan kriteria baru ke backend.");
-    }
+    raiseApiError(error, "Gagal menyimpan kriteria baru ke backend.");
   }
 };
 
@@ -713,9 +730,27 @@ export const saveAssessment = async (studentId, topicId, ratings, options = {}) 
     }
     markReportDataDirty();
     window.dispatchEvent(new Event("atl-data-updated"));
+    recordBackendSaveAudit({
+      type: "assessment-detail",
+      success: true,
+      studentId,
+      topicId,
+      status: data.status || "saved",
+      ratingCount: Object.values(ratings || {}).filter(Boolean).length,
+      hasBackendSnapshot: Boolean(data.assessments),
+    });
     return { synced: true, status: data.status || "saved", assessments: data.assessments || null };
   } catch (error) {
-    return { synced: false, error: assessmentSyncError(error) };
+    const message = assessmentSyncError(error);
+    recordBackendSaveAudit({
+      type: "assessment-detail",
+      success: false,
+      studentId,
+      topicId,
+      error: message,
+      statusCode: error?.response?.status || null,
+    });
+    return { synced: false, error: message };
   }
 };
 
@@ -725,6 +760,15 @@ export const saveAssessmentBatch = async (items = []) => {
     if (data.assessments) mergeAssessments(data.assessments);
     markReportDataDirty();
     window.dispatchEvent(new Event("atl-data-updated"));
+    recordBackendSaveAudit({
+      type: "assessment-batch",
+      success: true,
+      topicId: items[0]?.topicId || items[0]?.topic || "",
+      itemCount: items.length,
+      savedCount: data.savedCount || 0,
+      clearedCount: data.clearedCount || 0,
+      hasBackendSnapshot: Boolean(data.assessments),
+    });
     return {
       synced: true,
       assessments: data.assessments || null,
@@ -733,7 +777,16 @@ export const saveAssessmentBatch = async (items = []) => {
       clearedCount: data.clearedCount || 0,
     };
   } catch (error) {
-    return { synced: false, error: assessmentSyncError(error) };
+    const message = assessmentSyncError(error);
+    recordBackendSaveAudit({
+      type: "assessment-batch",
+      success: false,
+      topicId: items[0]?.topicId || items[0]?.topic || "",
+      itemCount: items.length,
+      error: message,
+      statusCode: error?.response?.status || null,
+    });
+    return { synced: false, error: message };
   }
 };
 

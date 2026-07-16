@@ -470,9 +470,11 @@ export default function StudManage() {
         setBackendError("");
       } else {
         writeStudentManageCache({ ...cache, catalog: nextCatalog });
-        setUpdateError("Update gagal, menampilkan data terakhir yang tersimpan.");
+        setHasNewData(true);
+        setUpdateError(analyticsResult.reason?.message || "Update gagal, menampilkan data terakhir yang tersimpan.");
       }
     } catch {
+      setHasNewData(true);
       setUpdateError("Update gagal. Coba lagi setelah backend aktif.");
     } finally {
       setIsUpdating(false);

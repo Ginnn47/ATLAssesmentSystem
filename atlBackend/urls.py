@@ -44,7 +44,7 @@ urlpatterns = [
     path('api/topics/', views.topics_api),
     path('api/topics/<str:topic_id>/', views.topic_detail_api),
     path('api/topics/<str:topic_id>/criteria/', views.topic_criteria_api),
-    path('api/criteria/<int:criterion_id>/', views.criterion_detail_api),
+    path('api/criteria/<str:criterion_id>/', views.criterion_detail_api),
     path('api/fuzzy-ahp/calculate/', views.fuzzy_calculate_api),
     path('api/topics/<str:topic_id>/weights/', views.topic_weights_api),
     path('api/assessments/', views.assessments_api),

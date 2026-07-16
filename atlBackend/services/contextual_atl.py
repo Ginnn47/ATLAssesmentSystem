@@ -412,6 +412,9 @@ def seed_choir_context(subskills):
     if not context:
         return
 
+    if context.rubric_items.exists():
+        return
+
     context.rubric_items.filter(title__in=STALE_CHOIR_RUBRIC_TITLES).delete()
 
     for order, rubric in enumerate(CHOIR_RUBRIC_ITEMS):
@@ -472,6 +475,8 @@ def seed_topic_rubrics_from_catalog():
                 "description": topic.description,
             },
         )
+        if context.rubric_items.exists():
+            continue
         for order, rubric in enumerate(rubric_rows):
             selected = [subskills[name] for name in rubric.get("subskills", []) if name in subskills]
             if not selected:
@@ -854,7 +859,11 @@ def calculate_context_weights(context, pairwise_payload=None, expert_user="", pe
             acknowledged=bool(pairwise_payload.get("validationAcknowledged")),
         )
         result["validation"] = validation
-        if persist and not validation.get("canApplyWeight"):
+        acknowledged_override = bool(pairwise_payload.get("validationAcknowledged"))
+        has_calculated_weights = bool(result.get("weights"))
+        if persist and not has_calculated_weights:
+            raise ValueError("Bobot belum tersedia. Silakan hitung pairwise terlebih dahulu.")
+        if persist and not validation.get("canApplyWeight") and not acknowledged_override:
             raise ValueError((validation.get("errors") or [{}])[0].get("message") or "Bobot belum lolos validasi.")
         saved_at = pairwise_payload.get("savedAt") or timezone.now().isoformat()
         activity = pairwise_payload.get("activity") or {}
@@ -925,6 +934,7 @@ def context_flow_to_dict(context):
         "weights": weights,
         "hasSavedWeight": bool(snapshot and snapshot.subskill_weights),
         "weightSource": "saved" if snapshot and snapshot.subskill_weights else "equal-fallback",
+        "weightUpdatedAt": snapshot.updated_at.isoformat() if snapshot and snapshot.updated_at else None,
         "debug": snapshot.debug if snapshot else {},
         "consistency": snapshot.consistency_ratio if snapshot else None,
         "rubricScales": [rubric_scale_to_dict(item) for item in RubricScale.objects.all()],
@@ -1201,7 +1211,6 @@ def calculate_context_ratings_preview(context, ratings, scoring_config=None):
 
 
 def build_context_report(class_name, context):
-    convert_legacy_assessments_to_contexts()
     students = get_students_for_class(class_name)
     rows = []
     for student in students:

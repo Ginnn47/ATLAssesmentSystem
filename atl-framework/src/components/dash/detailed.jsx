@@ -35,6 +35,26 @@ const ratingMeaning = {
   EE: "Melebihi ekspektasi; performa tampak kuat, mandiri, dan konsisten.",
 };
 
+const formatWeightScaleInfo = (updatedAt, source) => {
+  const fallbackDefault = "2027-07-02T10:47:00+07:00";
+  const targetDate = updatedAt || (source === "equal-fallback" ? fallbackDefault : "");
+  if (!targetDate) return "Belum ada bobot";
+  const date = new Date(targetDate);
+  if (Number.isNaN(date.getTime())) return "Tanggal bobot tidak tersedia";
+  const day = new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(date);
+  const time = new Intl.DateTimeFormat("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Jakarta",
+  }).format(date).replace(/\./g, ":");
+  return `${day} ${time} WIB`;
+};
+
 const getLevelTone = (code) => {
   const meta = getRatingMeta(code);
   return {
@@ -47,7 +67,6 @@ const getLevelTone = (code) => {
     activeBg: meta.color,
   };
 };
-
 export default function DetailedInputATL() {
   const initialSubjectOptions = getSubjectData().map(subjectDisplayName).filter(Boolean);
   const [classOptions, setClassOptions] = useState([]);
@@ -67,6 +86,7 @@ export default function DetailedInputATL() {
   const [backendStatus, setBackendStatus] = useState("idle");
   const [criteriaStatus, setCriteriaStatus] = useState("unknown");
   const [backendReportRows, setBackendReportRows] = useState([]);
+  const [weightInfo, setWeightInfo] = useState({ updatedAt: "", source: "" });
   const [localScoreRows, setLocalScoreRows] = useState({});
   const [previewScore, setPreviewScore] = useState(null);
   const [previewingScore, setPreviewingScore] = useState(false);
@@ -86,6 +106,7 @@ export default function DetailedInputATL() {
   const students = useMemo(() => apiStudents, [apiStudents]);
   const criteria = dummyATL[dataKey] || [];
   const criterion = criteria[selectedCriterionIndex] || criteria[0] || null;
+  const weightScaleLabel = formatWeightScaleInfo(weightInfo.updatedAt || dummyATL.savedWeights?.[dataKey]?.__savedAt, weightInfo.source);
   const isTopicReady = (topic) => Boolean(
     topic?.id && topic?.isActive !== false
   );
@@ -301,6 +322,7 @@ export default function DetailedInputATL() {
   useEffect(() => {
     if (!dataKey) {
       setRubricLoading(false);
+      setWeightInfo({ updatedAt: "", source: "" });
       return undefined;
     }
     let cancelled = false;
@@ -318,6 +340,10 @@ export default function DetailedInputATL() {
             setBackendStatus("ready");
             setBackendError("");
           }
+          setWeightInfo({
+            updatedAt: result?.flow?.weightUpdatedAt || result?.weights?.__savedAt || "",
+            source: result?.flow?.weightSource || "",
+          });
           const nextCriteriaCount = result?.criteria?.length ?? (dummyATL[dataKey] || []).length;
           setCriteriaStatus(nextCriteriaCount > 0 ? "available" : "empty");
           setDataVersion((version) => version + 1);
@@ -328,6 +354,10 @@ export default function DetailedInputATL() {
           setBackendStatus("failed");
           setBackendError(error.message || "Data backend belum tersambung. Menampilkan data terakhir.");
           setCriteriaStatus((dummyATL[dataKey] || []).length > 0 ? "available" : "empty");
+          setWeightInfo({
+            updatedAt: dummyATL.savedWeights?.[dataKey]?.__savedAt || "",
+            source: dummyATL.savedWeights?.[dataKey] ? "cached" : "",
+          });
           setDataVersion((version) => version + 1);
         }
       })
@@ -876,7 +906,7 @@ export default function DetailedInputATL() {
                         <p className="mt-2 text-sm leading-6 text-stone-600">Gunakan lima level berikut untuk membaca performa siswa secara sederhana.</p>
                       </div>
                       <span className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-black text-stone-900">
-                        {criterionRating ? "Sudah dinilai" : "Belum dinilai"}
+                        Bobot: {weightScaleLabel}
                       </span>
                     </div>
                     <div className="mt-4 grid gap-3 md:grid-cols-5">

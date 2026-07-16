@@ -319,6 +319,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
   const [backendError, setBackendError] = useState("");
   const [validationAcknowledged, setValidationAcknowledged] = useState(false);
   const [pairwiseFocus, setPairwiseFocus] = useState(null);
+  const [criteriaRefreshTick, setCriteriaRefreshTick] = useState(0);
 
   useEffect(() => {
     Promise.allSettled([getTopics(), getCurrentUser()])
@@ -471,7 +472,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
   };
 
   const handleSaveToSystem = async () => {
-    if (!result || !result.weights || !canApplyWeight) return;
+    if (!result || !result.weights || Object.keys(result.weights || {}).length === 0) return;
 
     const selectedSubject = subjectData.find((subject) => subject.id === selectedSubjectId);
     const selectedTopic = selectedSubject?.topics.find((topic) => topic.id === selectedTopicId);
@@ -587,15 +588,23 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
   const pairwiseComplete = totalPairCount > 0 && filledPairCount >= totalPairCount;
   const validationResult = result?.validation || null;
   const validationNeedsAcknowledgement = (validationResult?.warnings || []).some((warning) => warning.requiresAcknowledgement);
+  const hasCalculatedWeights = Boolean(result?.weights && Object.keys(result.weights || {}).length > 0);
   const hardValidationPassed = Boolean(
     validationResult &&
     validationResult.summary?.reciprocalCheck?.severity !== "danger" &&
     validationResult.summary?.saatyScaleCheck?.severity !== "danger" &&
     validationResult.summary?.consistencyRatio?.severity !== "danger"
   );
-  const canApplyWeight = Boolean(validationResult?.canApplyWeight || (hardValidationPassed && (!validationNeedsAcknowledgement || validationAcknowledged)));
+  const canApplyWeight = Boolean(
+    validationResult?.canApplyWeight ||
+    (hasCalculatedWeights && validationAcknowledged) ||
+    (hardValidationPassed && (!validationNeedsAcknowledgement || validationAcknowledged))
+  );
   const savedPackages = savedTopicWeights.packages || {};
   const recentSavedActivities = savedTopicWeights.__activity ? [savedTopicWeights.__activity] : [];
+  const criteriaChangeActivities = (dummyATL.criteriaChangeActivities || [])
+    .filter((activity) => !activity.topicId || activity.topicId === selectedTopicId)
+    .slice(0, 4);
   const hasSavedWeight = Boolean(contextFlow?.hasSavedWeight);
 
   const buildSavedWeightResult = () => {
@@ -682,12 +691,17 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
     return () => {
       cancelled = true;
     };
-  }, [selectedTopicId]);
+  }, [selectedTopicId, criteriaRefreshTick]);
 
   useEffect(() => {
     const syncTopics = () => setSubjectData(getSubjectData());
+    const refreshCriteriaFlow = () => setCriteriaRefreshTick((tick) => tick + 1);
     window.addEventListener("atl-topics-updated", syncTopics);
-    return () => window.removeEventListener("atl-topics-updated", syncTopics);
+    window.addEventListener("atl-criteria-updated", refreshCriteriaFlow);
+    return () => {
+      window.removeEventListener("atl-topics-updated", syncTopics);
+      window.removeEventListener("atl-criteria-updated", refreshCriteriaFlow);
+    };
   }, []);
 
   // Notify parent about topic change for tracking
@@ -914,6 +928,42 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
               )}
             </div>
           </div>
+
+          {criteriaChangeActivities.length > 0 && (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Criteria Update Notice</p>
+                <span className="material-symbols-outlined text-base text-amber-600">rule_settings</span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {criteriaChangeActivities.map((activity) => (
+                  <button
+                    key={activity.id || `${activity.topicId}-${activity.savedAt}`}
+                    type="button"
+                    onClick={() => selectSavedActivity(activity)}
+                    className="w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-left transition hover:border-amber-300 hover:bg-amber-50"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-[11px] font-black text-stone-900">
+                          {activity.message || "Kriteria berubah, pembobotan perlu diperbarui."}
+                        </p>
+                        <p className="truncate text-[10px] font-bold text-stone-500">
+                          {activity.subjectLabel || "Subject"} - {activity.topicLabel || activity.topicId}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded-lg bg-amber-100 px-2 py-1 text-[10px] font-black text-amber-700">
+                        {formatSavedActivityTime(activity.savedAt)}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <p className="mt-3 text-[10px] font-semibold leading-4 text-amber-700">
+                Hitung dan simpan ulang bobot agar persentase Fuzzy-AHP mengikuti kriteria terbaru.
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1902,7 +1952,7 @@ const ExpertManagement = ({ onAddCriteriaClick, onTopicChange }) => {
             <button 
               data-testid="fuzzy-save-weight-button"
               onClick={handleSaveToSystem}
-              disabled={savingWeights || !canApplyWeight}
+              disabled={savingWeights || !hasCalculatedWeights || (!canApplyWeight && !validationAcknowledged)}
               className="flex items-center gap-2 rounded-2xl bg-primary px-8 py-3 text-sm font-black text-white shadow-xl shadow-primary/20 transition-all hover:bg-secondary hover:-translate-y-0.5 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span className="material-symbols-outlined text-lg">{savingWeights ? "hourglass_top" : "save"}</span>

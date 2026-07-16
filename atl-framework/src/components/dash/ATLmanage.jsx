@@ -78,6 +78,25 @@ const prettyTopic = (topicId) =>
     .join(" ");
 
 const SUMMARY_TOPIC_KEY = "atl_manage_summary_topic";
+const DEFAULT_WEIGHT_CALCULATION_TIMESTAMP = "2027-07-02T10:47:00+07:00";
+
+const formatSummaryCalculationTime = (value) => {
+  const date = new Date(value || DEFAULT_WEIGHT_CALCULATION_TIMESTAMP);
+  if (Number.isNaN(date.getTime())) return "02 Jul 2027 10:47 WIB";
+  const day = new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(date);
+  const time = new Intl.DateTimeFormat("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Jakarta",
+  }).format(date).replace(/\./g, ":");
+  return `${day} ${time} WIB`;
+};
+
 const getInitialSummaryTopic = () => {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem(SUMMARY_TOPIC_KEY) || "";
@@ -176,10 +195,12 @@ export default function ATLmanage({ page = "criteria" }) {
         });
     };
     window.addEventListener("atl-weights-updated", syncWeights);
+    window.addEventListener("atl-criteria-updated", syncWeights);
     window.addEventListener("focus", syncWeights);
     return () => {
       cancelled = true;
       window.removeEventListener("atl-weights-updated", syncWeights);
+      window.removeEventListener("atl-criteria-updated", syncWeights);
       window.removeEventListener("focus", syncWeights);
     };
   }, [isWeightPage, selectedTopic]);
@@ -238,6 +259,7 @@ export default function ATLmanage({ page = "criteria" }) {
       .map((entry) => ({ ...entry, value: entry.value / total }))
       .sort((a, b) => b.value - a.value);
     const dominantOverall = distribution[0] || { subskill: "-", atl: "-", value: 0 };
+    const calculationTimeLabel = formatSummaryCalculationTime(savedWeights.__savedAt);
     const donut = distribution.length
       ? `conic-gradient(${distribution.map((entry, index) => {
           const previous = distribution.slice(0, index).reduce((sum, item) => sum + item.value, 0) * 100;
@@ -246,7 +268,7 @@ export default function ATLmanage({ page = "criteria" }) {
         }).join(", ")})`
       : "conic-gradient(#eab308 0% 100%)";
 
-    return { rows, distribution, dominantOverall, donut };
+    return { rows, distribution, dominantOverall, donut, calculationTimeLabel };
   })();
 
   const selectedSummaryMeta = (() => {
@@ -361,7 +383,7 @@ export default function ATLmanage({ page = "criteria" }) {
                     ["grid_view", "Jumlah Kriteria", summaryData.rows.length],
                     ["person", "Jumlah ATL", 5],
                     ["settings", "Metode", "Fuzzy-AHP"],
-                    ["calendar_month", "Tanggal Perhitungan", "10 Mei 2025 14:32"],
+                    ["calendar_month", "Tanggal Perhitungan", summaryData.calculationTimeLabel],
                   ].map(([icon, label, value]) => (
                     <div key={label} className="mb-5 flex items-start gap-3 last:mb-0">
                       <span className="material-symbols-outlined mt-0.5 text-[20px] text-stone-500">{icon}</span>

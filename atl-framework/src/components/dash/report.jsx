@@ -275,9 +275,11 @@ export default function Report() {
         setHasNewData(false);
       } else {
         writeReportCache({ ...cache, catalog: nextCatalog });
-        setUpdateError("Update gagal, menampilkan snapshot terakhir. Pastikan mapel/subtopik sudah memiliki kriteria.");
+        setHasNewData(true);
+        setUpdateError(reportResult.reason?.message || "Update gagal, menampilkan snapshot terakhir. Pastikan mapel/subtopik sudah memiliki kriteria.");
       }
     } catch {
+      setHasNewData(true);
       setUpdateError("Update gagal, menampilkan snapshot terakhir. Cache browser tidak dapat diperbarui.");
     } finally {
       setIsUpdating(false);

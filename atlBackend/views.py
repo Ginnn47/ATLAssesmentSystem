@@ -968,21 +968,41 @@ def topic_to_dict(topic):
 
 
 def criterion_to_dict(criterion):
-    atl_list = criterion.atl or []
+    context = LearningContext.objects.filter(legacy_topic_code=criterion.topic.code).first()
+    rubric_item = context.rubric_items.filter(title=criterion.name).first() if context else None
+    if rubric_item:
+        subskills = list(
+            rubric_item.subskills.select_related("category").order_by("category__order", "order", "name")
+        ) or [rubric_item.subskill]
+        subskills = [subskill for subskill in subskills if subskill]
+        atl_list = [subskill.name for subskill in subskills]
+        levels = rubric_item.level_descriptors or criterion.levels or {}
+        criteria_topic = rubric_item.criteria_topic or ""
+    else:
+        atl_list = criterion.atl or []
+        subskills = subskills_for_names(atl_list)
+        levels = criterion.levels or {}
+        criteria_topic = ""
     categories = []
-    for item in atl_list:
-        if isinstance(item, dict):
-            category_name = (item.get("category") or {}).get("name") or ""
+    for subskill in subskills:
+        category_name = subskill.category.name if subskill.category else ""
+        if category_name and category_name not in categories:
             categories.append(category_name)
-        else:
-            categories.append("")
-    
+
     return {
-        "id": criterion.id,
+        "id": f"context:{rubric_item.id}" if rubric_item else f"criterion:{criterion.id}",
+        "criterionId": criterion.id,
+        "rubricItemId": rubric_item.id if rubric_item else None,
         "kriteria": criterion.name,
         "atl": atl_list,
         "categories": categories,
-        "levels": criterion.levels or {},
+        "atlCategories": categories,
+        "category": ", ".join(categories),
+        "subskillIds": [subskill.id for subskill in subskills],
+        "subskillId": subskills[0].id if subskills else "",
+        "subskillName": ", ".join(subskill.name for subskill in subskills),
+        "levels": levels,
+        "criteriaTopic": criteria_topic,
     }
 
 
@@ -1053,7 +1073,8 @@ def context_criteria_to_legacy(context):
                 categories.append(subskill.category.name)
         criteria.append(
             {
-                "id": item.id,
+                "id": f"context:{item.id}",
+                "rubricItemId": item.id,
                 "criteriaTopic": item.criteria_topic,
                 "kriteria": item.title,
                 "atl": [subskill.name for subskill in linked_subskills],
@@ -1511,6 +1532,7 @@ def context_weights_api(request, context_id):
                 "consistency": flow["consistency"],
                 "hasSavedWeight": flow["hasSavedWeight"],
                 "weightSource": flow["weightSource"],
+                "weightUpdatedAt": flow.get("weightUpdatedAt"),
                 "scaleOptions": flow.get("scaleOptions") or [],
             }
         )
@@ -1623,6 +1645,10 @@ def topic_criteria_api(request, topic_id):
             if context is None:
                 repair = ensure_assessable_topic(topic_id)
                 context = repair.get("context")
+            if Criterion.objects.filter(topic=topic, name__iexact=criterion_name).exists() or (
+                context and ContextRubricItem.objects.filter(context=context, title__iexact=criterion_name).exists()
+            ):
+                return {"error": "Kriteria dengan nama ini sudah ada. Gunakan tombol Edit untuk mengubah kriteria.", "_status": 400}
             subskills = find_subskills_for_payload(payload)
             subskill = subskills[0] if subskills else find_subskill_for_payload(context, payload)
             if not context or not subskill:
@@ -1675,8 +1701,18 @@ def criterion_detail_api(request, criterion_id):
     if guard:
         return guard
 
+    raw_identifier = str(criterion_id or "")
+    identifier_kind = ""
+    identifier_value = raw_identifier
+    if ":" in raw_identifier:
+        identifier_kind, identifier_value = raw_identifier.split(":", 1)
+    if not str(identifier_value).isdigit():
+        return api_response({"error": "Criterion ID is invalid"}, status=400)
+
     try:
-        criterion = Criterion.objects.get(id=criterion_id)
+        if identifier_kind == "context":
+            raise Criterion.DoesNotExist()
+        criterion = Criterion.objects.get(id=int(identifier_value))
         subject_guard = require_subject_access(request, criterion.topic.subject, [ROLE_ATL_EXPERT, ROLE_SUBJECT_COORDINATOR])
         if subject_guard:
             return subject_guard
@@ -1696,9 +1732,15 @@ def criterion_detail_api(request, criterion_id):
         payload = parse_body(request)
         old_name = criterion.name
         old_atl = criterion.atl or []
+        next_name = (payload.get("kriteria") or payload.get("name") or criterion.name).strip()
+        if next_name.lower() != old_name.lower() and (
+            Criterion.objects.filter(topic=criterion.topic, name__iexact=next_name).exclude(id=criterion.id).exists()
+            or ContextRubricItem.objects.filter(context__legacy_topic_code=criterion.topic.code, title__iexact=next_name).exists()
+        ):
+            return api_response({"error": "Kriteria dengan nama ini sudah ada. Gunakan nama lain atau edit kriteria yang sudah ada."}, status=400)
         subskills = find_subskills_for_payload(payload)
         with transaction.atomic():
-            criterion.name = (payload.get("kriteria") or payload.get("name") or criterion.name).strip()
+            criterion.name = next_name
             criterion.atl = [subskill.name for subskill in subskills] or payload.get("atl") or []
             criterion.levels = payload.get("levels") or {}
             criterion.save()
@@ -1715,7 +1757,9 @@ def criterion_detail_api(request, criterion_id):
         return api_response({"criterion": criterion_to_dict(criterion), "topic": topic_to_dict(criterion.topic)})
     except Criterion.DoesNotExist:
         try:
-            rubric_item = ContextRubricItem.objects.select_related("context", "subskill", "subskill__category").get(id=criterion_id)
+            if identifier_kind == "criterion":
+                raise ContextRubricItem.DoesNotExist()
+            rubric_item = ContextRubricItem.objects.select_related("context", "subskill", "subskill__category").get(id=int(identifier_value))
             subject_guard = require_context_subject_access(request, rubric_item.context, [ROLE_ATL_EXPERT, ROLE_SUBJECT_COORDINATOR])
             if subject_guard:
                 return subject_guard
@@ -1738,8 +1782,15 @@ def criterion_detail_api(request, criterion_id):
             subskills = find_subskills_for_payload(payload)
             subskill = (subskills[0] if subskills else None) or find_subskill_for_payload(rubric_item.context, payload) or rubric_item.subskill
             context = rubric_item.context
+            next_name = (payload.get("kriteria") or payload.get("name") or rubric_item.title).strip()
+            topic = Topic.objects.filter(code=context.legacy_topic_code).first() if context.legacy_topic_code else None
+            if topic and next_name.lower() != old_name.lower() and (
+                ContextRubricItem.objects.filter(context=context, title__iexact=next_name).exclude(id=rubric_item.id).exists()
+                or Criterion.objects.filter(topic=topic, name__iexact=next_name).exists()
+            ):
+                return api_response({"error": "Kriteria dengan nama ini sudah ada. Gunakan nama lain atau edit kriteria yang sudah ada."}, status=400)
             with transaction.atomic():
-                rubric_item.title = (payload.get("kriteria") or payload.get("name") or rubric_item.title).strip()
+                rubric_item.title = next_name
                 rubric_item.subskill = subskill
                 rubric_item.criteria_topic = payload.get("criteriaTopic") or payload.get("criteria_topic") or rubric_item.criteria_topic
                 rubric_item.level_descriptors = payload.get("levels") or payload.get("levelDescriptors") or rubric_item.level_descriptors
@@ -1751,9 +1802,18 @@ def criterion_detail_api(request, criterion_id):
                         subskill=linked_subskill,
                         defaults={"order": context.mappings.count() + index, "is_active": True},
                     )
-                topic = Topic.objects.filter(code=context.legacy_topic_code).first() if context.legacy_topic_code else None
                 if topic:
-                    sync_references(topic, old_name, old_atl, rubric_item.title, [subskill.name for subskill in selected_item_subskills])
+                    next_atl = [subskill.name for subskill in selected_item_subskills]
+                    legacy = Criterion.objects.filter(topic=topic, name=old_name).first()
+                    if legacy is None:
+                        legacy = Criterion.objects.filter(topic=topic, name=rubric_item.title).first()
+                    if legacy is None:
+                        legacy = Criterion(topic=topic, order=topic.criteria.count())
+                    legacy.name = rubric_item.title
+                    legacy.atl = next_atl
+                    legacy.levels = rubric_item.level_descriptors or DEFAULT_LEVELS
+                    legacy.save()
+                    sync_references(topic, old_name, old_atl, rubric_item.title, next_atl)
                     invalidate_weights_for_topic(topic)
                 else:
                     invalidate_weights_for_context(context)
@@ -1765,7 +1825,8 @@ def criterion_detail_api(request, criterion_id):
             return api_response(
                 {
                     "criterion": {
-                        "id": rubric_item.id,
+                        "id": f"context:{rubric_item.id}",
+                        "rubricItemId": rubric_item.id,
                         "criteriaTopic": rubric_item.criteria_topic,
                         "kriteria": rubric_item.title,
                         "atl": [linked_subskill.name for linked_subskill in linked_subskills],
@@ -2193,16 +2254,15 @@ def reports_api(request):
     topic_id = request.GET.get("topic") or "singing_christmas_carol"
     context_id = request.GET.get("context") or topic_id
     try:
-        if topic_id:
-            ensure_assessable_topic(topic_id)
         try:
-            context = get_context(context_id)
+            context_queryset = LearningContext.objects.all()
+            context = context_queryset.get(id=int(context_id)) if str(context_id).isdigit() else context_queryset.get(legacy_topic_code=context_id)
             if context.rubric_items.exists():
                 return api_response(build_context_report(class_name, context))
         except (LearningContext.DoesNotExist, OperationalError):
             pass
 
-        topic = get_topic(topic_id)
+        topic = Topic.objects.select_related("subject").get(code=topic_id, is_active=True)
         criteria = [criterion_to_dict(item) for item in topic.criteria.all()]
         weights_record = FuzzyWeight.objects.filter(topic=topic).first()
         weights = weights_record.weights if weights_record else {}
